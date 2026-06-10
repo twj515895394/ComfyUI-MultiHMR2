@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "multihmr2"
+version = "0.1.0"
+description = "Multi-HMR 2 simple inference API + CLI"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Internal use only"}
+
+dependencies = [
+    "torch",
+    "torchvision",
+    "anny",
+    "numpy",
+    "pillow",
+    "tqdm",
+    "roma",
+    "einops",
+    "scikit-learn",
+    "warp-lang",
+    "torchmetrics",
+    "termcolor"
+]
+
+[project.optional-dependencies]
+# Optional: only needed if rendering is used
+render = ["pyrender", "trimesh", "matplotlib", "scipy"]
+
+[project.scripts]
+multihmr2 = "multihmr2.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

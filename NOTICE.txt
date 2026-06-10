@@ -1,0 +1,76 @@
+Multi-HMR 2 Notice of acknowledgements:
+
+Portions of the Materials may utilize the following subcomponents or dependencies with separate copyright notices and license terms, the use of which is hereby acknowledged:
+
+---------------------------------------------------
+PART 1: SEE NOTICES BELOW WITH RESPECT TO DATASETS:
+---------------------------------------------------
+
+The datasets listed in this PART 1, which are not being distributed with the Materials, are available under the following terms, which as applicable also apply to the use of checkpoints distributed with the Materials that are trained using such datasets (i.e., any use of checkpoints derived from such datasets are subject, as applicable, to any additional terms and conditions of the corresponding dataset license in addition to the terms and conditions of the License to the Materials):
+
+(2.A) BEDLAM Dataset: see https://bedlam.is.tue.mpg.de
+made available under the following license: https://bedlam.is.tue.mpg.de/license.html
+Also see: Michael Black et al., "A Synthetic Dataset of Bodies Exhibiting Detailed Lifelike Animated Motion" in Proceedings IEEE/CVF Conf.~on Computer Vision and Pattern Recognition (CVPR), pp. 8726-8737, June 2023.
+
+(2.B) AnnyOne Dataset: see https://europe.naverlabs.com/research/vision-foundation-models-for-human-understanding/anny-one/
+made available under the following license: https://download.europe.naverlabs.com/humans/AnnyOne/AnnyOne_LICENSE.txt
+
+(2.C) MSCOCO Dataset: see https://cocodataset.org/#download
+made available under the following license (Creative Commons Attribution 4.0): https://creativecommons.org/licenses/by/4.0/legalcode
+Also see: Lin et al., "Microsoft COCO: Common Objects in Context" on https://arxiv.org/abs/1405.0312, May 2014.
+
+(2.D) MPII Dataset: https://www.mpi-inf.mpg.de/departments/computer-vision-and-machine-learning/software-and-datasets/mpii-human-pose-dataset/download
+made available under the following license (Simplified BSD License): https://creativecommons.org/licenses/by/4.0/legalcode
+Also see: Andriluka et al., "2D Human Pose Estimation: New Benchmark and State of the Art Analysis" on https://ieeexplore.ieee.org/document/6909866, June 2014.
+
+(2.E) AIC Dataset: see https://github.com/AIChallenger/AI_Challenger_2017
+made available under the following license (Apache 2.0): 
+https://github.com/AIChallenger/AI_Challenger_2017/blob/master/Baselines/LICENSE
+
+(2.F) Openimages 3M Dataset: see https://storage.googleapis.com/openimages/web/download_v7.html
+made available under the following license (Creative Commons Attribution 2.0): https://creativecommons.org/licenses/by/2.0/
+Also see: Kuznetsova et al., "The Open Images Dataset V4: Unified image classification, object detection, and visual relationship detection at scale" on https://arxiv.org/abs/1811.00982, Nov. 2018.
+
+------------------------------------------------------
+PART 2: SEE NOTICES BELOW WITH RESPECT TO MODEL FILES:
+------------------------------------------------------
+
+Portions of the Materials include models derived from the model(s) listed in this PART 2 that are available under the following terms, which as applicable also apply to the use of models distributed with the Materials (i.e., any use of derived models derived, as applicable, to any additional limiting terms and conditions of the corresponding model license in addition to the terms and conditions of the License to the Materials):
+
+(2.A) Multi-HMR: https://github.com/naver/multi-hmr
+is made available under the following license
+https://github.com/naver/multi-hmr/blob/master/LICENSE.txt
+
+
+------------------------------------------------------
+PART 3: SEE NOTICES BELOW WITH RESPECT TO IMAGE FILES:
+------------------------------------------------------
+
+Portions of the Materials include images listed in this PART 3 that are available under the following terms under which they were originally distributed:
+
+(3.A) The image files available here: 
+   https://www.pexels.com/video/beautiful-women-dancing-together-8955999/
+     Attribution: Kampus Production
+   https://www.pexels.com/photo/people-playing-volleyball-6180444/
+     Attribution: Kampus Production
+are made available under the following license:
+   https://www.pexels.com/license/
+
+---------------------------------------------------------
+PART 4: SEE NOTICES BELOW WITH RESPECT TO SOFTWARE FILES:
+---------------------------------------------------------
+Portions of the Materials incorporate software identified in PART 4, which is distributed with the Materials in either unmodified or modified form. Any software distributed in unmodified form remains subject to the terms and conditions set forth below, and any software distributed in modified form is subject to the license applicable to the Materials, in addition to any further limiting terms and conditions specified below:
+
+(4.A) The software available here:
+	https://github.com/shubham-goel/4D-Humans
+under these conditions (MIT License):
+	https://github.com/shubham-goel/4D-Humans/blob/main/LICENSE.md
+is being redistributed here:
+	multihmr2/models/detr_root_relative/hph.py
+
+(4.B) The software available here:
+	https://github.com/lucidrains/vit-pytorch
+under these conditions (MIT License):
+	https://github.com/lucidrains/vit-pytorch/blob/main/LICENSE
+is being redistributed here:
+	multihmr2/models/detr_root_relative/hph.py
