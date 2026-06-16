@@ -10,8 +10,8 @@
   </p>
 
   <p align="center">
-  <a href="https://arxiv.org/abs/2606.xxxxx"><img alt="arXiv" src="https://img.shields.io/badge/arXiv-2606.xxxxx-green"></a>
-  <a href="https://arxiv.org/pdf/2606.xxxxx.pdf"><img alt="Pdf" src="https://img.shields.io/badge/PDF-Download-red"></a>
+  <a href="https://arxiv.org/abs/2606.14841"><img alt="arXiv" src="https://img.shields.io/badge/arXiv-2606.14841-green"></a>
+  <a href="https://arxiv.org/pdf/2606.14841.pdf"><img alt="Pdf" src="https://img.shields.io/badge/PDF-Download-red"></a>
   <a href="https://europe.naverlabs.com/"><img alt="Blogpost" src="https://img.shields.io/badge/Blogpost-yellow"></a>
   <a href="https://multi-hmr-2-demo.europe.naverlabs.com/"><img alt="Demo" src="https://img.shields.io/badge/Demo-blue"></a>
   </p>
@@ -120,9 +120,9 @@ If you find our paper or code useful you can cite our work with:
     title={{Multi-HMR 2}: Multi-Person Camera-Centric Human Detection, Mesh Recovery and Tracking},
     author={Fiche, Gu{\'e}nol{\'e} and Weinzaepfel, Philippe and Br{\'e}gier, Romain and Baradel, Fabien},
     year={2026},
-    eprint={2606.xxxxx},
+    eprint={2606.14841},
     archivePrefix={arXiv},
     primaryClass={cs.CV},
-    url={https://arxiv.org/abs/2606.xxxxx}, 
+    url={https://arxiv.org/abs/2606.14841}, 
 }
 ```
