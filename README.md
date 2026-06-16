@@ -12,7 +12,7 @@
   <p align="center">
   <a href="https://arxiv.org/abs/2606.14841"><img alt="arXiv" src="https://img.shields.io/badge/arXiv-2606.14841-green"></a>
   <a href="https://arxiv.org/pdf/2606.14841.pdf"><img alt="Pdf" src="https://img.shields.io/badge/PDF-Download-red"></a>
-  <a href="https://europe.naverlabs.com/"><img alt="Blogpost" src="https://img.shields.io/badge/Blogpost-yellow"></a>
+  <a href="https://europe.naverlabs.com/blog/multi-hmr-2-seeing-people-in-3d/"><img alt="Blogpost" src="https://img.shields.io/badge/Blogpost-yellow"></a>
   <a href="https://multi-hmr-2-demo.europe.naverlabs.com/"><img alt="Demo" src="https://img.shields.io/badge/Demo-blue"></a>
   </p>
 
