@@ -15,8 +15,7 @@ import numpy as np
 
 from PIL import Image
 from pathlib import Path
-
-from anny.models.phenotype import RiggedModelWithPhenotypeParameters
+from anny import Anny
 
 from .models.detr_root_relative.decoder import DecoderOutput
 from .tracker import FeatPelvisTracker
@@ -69,7 +68,7 @@ class InferenceSession(object):
     model: DETR_Root_Relative
     device: torch.device
     use_cuda: bool
-    body_model_world: RiggedModelWithPhenotypeParameters
+    body_model_world: Anny
     img_size: int
     patch_size: int
     preprocessor: ImagePreproc
