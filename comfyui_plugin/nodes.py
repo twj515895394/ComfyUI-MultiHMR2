@@ -173,10 +173,10 @@ class MultiHMR2VideoAnalyze:
             "dist_thresh_nms": ("FLOAT", {"default": 0.25, "min": 0.01, "max": 2.0, "step": 0.01}),
             "lowres": ("BOOLEAN", {"default": False}),
             "compile_model": ("BOOLEAN", {"default": False}),
-            "segment_size": ("INT", {"default": 120, "min": 0, "max": 10000, "step": 1}),
         }, "optional": {
             "audio": ("AUDIO",),
             "video_info": ("VHS_VIDEOINFO",),
+            "segment_size": ("INT", {"default": 120, "min": 0, "max": 10000, "step": 1}),
         }}
 
     RETURN_TYPES = ("MULTI_HMR2_ANALYSIS", "INT", "AUDIO", "VHS_VIDEOINFO")
@@ -184,7 +184,7 @@ class MultiHMR2VideoAnalyze:
     FUNCTION = "analyze"
     CATEGORY = "MultiHMR2/Video"
 
-    def analyze(self, images, frame_count, conf_thresh, dist_thresh_nms, lowres, compile_model, segment_size, audio=None, video_info=None):
+    def analyze(self, images, frame_count, conf_thresh, dist_thresh_nms, lowres, compile_model, segment_size=120, audio=None, video_info=None):
         fps = float((video_info or {}).get("loaded_fps", 30.0))
         preds, key = _load_or_analyze(images, fps, conf_thresh, dist_thresh_nms, lowres, compile_model, segment_size)
         return ({"preds": preds, "cache_key": key, "fps": fps, "lowres": bool(lowres)}, int(frame_count), audio, video_info or {})
@@ -201,6 +201,7 @@ class MultiHMR2VideoRender:
             "show_skeleton": ("BOOLEAN", {"default": True}),
             "show_track_id": ("BOOLEAN", {"default": True}),
             "mesh_opacity": ("FLOAT", {"default": 0.65, "min": 0.0, "max": 1.0, "step": 0.05}),
+        }, "optional": {
             "track_id": ("INT", {"default": -1, "min": -1, "max": 10000, "step": 1}),
         }}
 
@@ -209,7 +210,7 @@ class MultiHMR2VideoRender:
     FUNCTION = "render"
     CATEGORY = "MultiHMR2/Video"
 
-    def render(self, images, analysis, background, show_mesh, show_skeleton, show_track_id, mesh_opacity, track_id):
+    def render(self, images, analysis, background, show_mesh, show_skeleton, show_track_id, mesh_opacity, track_id=-1, background_image=None, **kwargs):
         _, _, render_meshes, _ = _backend()
         preds = analysis["preds"]
         high_quality_masks = _birefnet_masks(images) if background == "transparent" else None
