@@ -106,11 +106,12 @@ OPENCV_TO_OPENGL_CAMERA_CONVENTION = np.array([[1, 0, 0, 0],
                                                [0, 0, -1, 0],
                                                [0, 0, 0, 1]])
 
-def render_meshes(img, l_mesh, l_face, cam_param, color=None):
+def render_meshes(img, l_mesh, l_face, cam_param, color=None, return_mask=False):
     """
     Rendering multiple mesh and project then in the initial image.
     Args:
         - img: np.array [w,h,3]
+        - return_mask: if True, return ``(image, alpha_mask)`` instead of image
         - l_mesh: np.array list of [v,3]
         - l_face: np.array list of [f,3]
         - cam_param: info about the camera intrinsics (focal, princpt) and (R,t) is possible
@@ -191,4 +192,6 @@ def render_meshes(img, l_mesh, l_face, cam_param, color=None):
 
     renderer.delete()
 
+    if return_mask:
+        return img.astype(np.uint8), (fg[..., 0] * 255).clip(0, 255).astype(np.uint8)
     return img.astype(np.uint8)

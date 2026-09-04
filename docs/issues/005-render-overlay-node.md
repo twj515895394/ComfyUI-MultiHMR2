@@ -16,3 +16,7 @@
 - 默认保留原始背景。
 - Render 参数变化不会触发 Analyze。
 - 输出可直接接 VHS Video Combine。
+
+## 实现状态
+
+- 已增加 `track_id` 筛选参数，`-1` 表示全部人物。
