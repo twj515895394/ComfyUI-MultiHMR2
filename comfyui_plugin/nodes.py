@@ -9,6 +9,7 @@ import logging
 import os
 import sys
 import tempfile
+import gc
 from dataclasses import fields as dataclass_fields
 from pathlib import Path
 from typing import Any
@@ -86,6 +87,32 @@ def _session(compile_model: bool):
         LOGGER.info("Loading Multi-HMR2 checkpoint: %s", MODEL_PATH)
         _SESSION_CACHE[key] = init_hmr_session(MODEL_PATH, compile_model=compile_model)
     return _SESSION_CACHE[key]
+
+
+def _release_memory() -> None:
+    """Release model references and unused CUDA allocations after rendering."""
+    global _SEGMENTER_CACHE
+    sessions = list(_SESSION_CACHE.values())
+    for session in sessions:
+        for obj in (getattr(session, "model", None), getattr(session, "body_model_world", None)):
+            if obj is not None and hasattr(obj, "to"):
+                try:
+                    obj.to("cpu")
+                except Exception as exc:
+                    LOGGER.debug("Could not move cached model to CPU during cleanup: %s", exc)
+    _SESSION_CACHE.clear()
+    if _SEGMENTER_CACHE is not None and hasattr(_SEGMENTER_CACHE, "to"):
+        try:
+            _SEGMENTER_CACHE.to("cpu")
+        except Exception as exc:
+            LOGGER.debug("Could not move cached segmenter to CPU during cleanup: %s", exc)
+    _SEGMENTER_CACHE = None
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        if hasattr(torch.cuda, "ipc_collect"):
+            torch.cuda.ipc_collect()
+    LOGGER.info("MultiHMR2 model and CUDA cache released after render")
 
 
 def _as_uint8(frame: torch.Tensor) -> np.ndarray:
@@ -409,6 +436,7 @@ class MultiHMR2VideoRender:
             "mesh_opacity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05, "tooltip": "3D 白模不透明度。1.0 为完全不透明（推荐）；较低值会让原视频背景透过网格。"}),
         }, "optional": {
             "track_id": ("INT", {"default": -1, "min": -1, "max": 10000, "step": 1, "tooltip": "只渲染指定 Track ID；-1 表示渲染全部人物。Track ID 来自 Analyze 节点。"}),
+            "keep_model_loaded": ("BOOLEAN", {"default": False, "tooltip": "是否保留模型在显存中。关闭后本次输出完成会释放模型和 CUDA 缓存，节省显存但下次运行需要重新加载。"}),
         }}
 
     RETURN_TYPES = ("IMAGE", "FLOAT")
@@ -416,7 +444,7 @@ class MultiHMR2VideoRender:
     FUNCTION = "render"
     CATEGORY = "MultiHMR2/Video"
 
-    def render(self, images, analysis, background, show_mesh, show_skeleton, show_track_id, mesh_opacity, track_id=-1, mesh_color="track_color", background_image=None, **kwargs):
+    def render(self, images, analysis, background, show_mesh, show_skeleton, show_track_id, mesh_opacity, track_id=-1, mesh_color="track_color", keep_model_loaded=False, background_image=None, **kwargs):
         _, _, render_meshes, _ = _backend()
         preds = analysis["preds"]
         model_size = int(analysis.get("model_size", 768))
@@ -482,7 +510,10 @@ class MultiHMR2VideoRender:
                 output.append(torch.from_numpy(rgba.astype(np.float32) / 255.0))
             else:
                 output.append(torch.from_numpy(base.astype(np.float32) / 255.0))
-        return (torch.stack(output, dim=0), float(analysis.get("fps", 30.0)))
+        result = (torch.stack(output, dim=0), float(analysis.get("fps", 30.0)))
+        if not keep_model_loaded:
+            _release_memory()
+        return result
 
 
 NODE_CLASS_MAPPINGS = {
