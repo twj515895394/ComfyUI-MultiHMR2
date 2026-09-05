@@ -208,33 +208,44 @@ def _fallback_overlay(image: np.ndarray, pred, show_skeleton: bool, show_id: boo
     return out
 
 
-def _software_mesh_overlay(image: np.ndarray, pred, focal: np.ndarray, princpt: np.ndarray, opacity: float):
-    """Render a stable white 3D silhouette without an OpenGL context.
+def _software_mesh_overlay(image: np.ndarray, pred, focal: np.ndarray, princpt: np.ndarray, opacity: float, faces):
+    """Rasterize the actual body triangles without requiring an OpenGL context.
 
     ComfyUI often runs headless on Windows, where pyrender cannot create a WGL
-    context.  The projected mesh hull is a useful visual fallback and keeps the
-    node's main output usable instead of dropping all the way to skeleton-only.
+    context.  This keeps the real body topology visible instead of drawing only
+    a convex-hull silhouette.
     """
     import cv2
 
     overlay = image.copy()
     alpha_mask = np.zeros(image.shape[:2], dtype=np.uint8)
+    faces = np.asarray(faces, dtype=np.int32).reshape(-1, 3)
     for vertices in pred.persons.v3d.detach().cpu().numpy():
         verts = vertices.reshape(-1, 3)
         z = verts[:, 2]
         valid = np.isfinite(verts).all(axis=1) & (z > 1e-5)
         if valid.sum() < 3:
             continue
-        pts = np.empty((valid.sum(), 2), dtype=np.float32)
-        xyz = verts[valid]
-        pts[:, 0] = focal[0] * xyz[:, 0] / xyz[:, 2] + princpt[0]
-        pts[:, 1] = focal[1] * xyz[:, 1] / xyz[:, 2] + princpt[1]
+        pts = np.empty((len(verts), 2), dtype=np.float32)
+        pts[:, 0] = focal[0] * verts[:, 0] / np.maximum(verts[:, 2], 1e-5) + princpt[0]
+        pts[:, 1] = focal[1] * verts[:, 1] / np.maximum(verts[:, 2], 1e-5) + princpt[1]
         pts = np.round(pts).astype(np.int32)
         pts[:, 0] = np.clip(pts[:, 0], 0, image.shape[1] - 1)
         pts[:, 1] = np.clip(pts[:, 1], 0, image.shape[0] - 1)
-        hull = cv2.convexHull(pts)
-        cv2.fillConvexPoly(alpha_mask, hull, 255)
-        cv2.fillConvexPoly(overlay, hull, (235, 235, 235), cv2.LINE_AA)
+        valid_faces = faces[(faces >= 0).all(axis=1) & (faces < len(verts)).all(axis=1)]
+        valid_faces = valid_faces[np.isfinite(verts[valid_faces]).all(axis=(1, 2)) & (verts[valid_faces, 2] > 1e-5).all(axis=1)]
+        # Painter's algorithm: far triangles first, near triangles last.
+        depths = verts[valid_faces, 2].mean(axis=1)
+        for tri, depth in sorted(zip(valid_faces, depths), key=lambda item: item[1], reverse=True):
+            polygon = pts[tri]
+            edge1 = verts[tri[1]] - verts[tri[0]]
+            edge2 = verts[tri[2]] - verts[tri[0]]
+            normal = np.cross(edge1, edge2)
+            light = float(np.clip(abs(normal[1]) / (np.linalg.norm(normal) + 1e-6), 0.0, 1.0))
+            shade = int(155 + 90 * light)
+            cv2.fillConvexPoly(overlay, polygon, (shade, shade, shade), cv2.LINE_AA)
+            cv2.fillConvexPoly(alpha_mask, polygon, 255, cv2.LINE_AA)
+            cv2.polylines(overlay, [polygon], True, (105, 105, 105), 1, cv2.LINE_AA)
     amount = float(np.clip(opacity, 0.0, 1.0))
     blended = (image * (1.0 - amount) + overlay * amount).clip(0, 255).astype(np.uint8)
     return blended, alpha_mask
@@ -305,8 +316,10 @@ class MultiHMR2VideoRender:
             alpha = (high_quality_masks[index] * 255).astype(np.uint8) if high_quality_masks is not None else (np.zeros(base.shape[:2], dtype=np.uint8) if transparent else None)
             try:
                 if show_mesh and len(pred) and _use_software_mesh():
+                    session = _session(False)
+                    body_model = session.model.full_body_decoder.lowres_body_model if analysis.get("lowres") else session.model.full_body_decoder.body_model
                     focal, k = _camera_to_frame(pred.K.numpy(), base.shape)
-                    base, software_alpha = _software_mesh_overlay(base, pred, focal, k, mesh_opacity)
+                    base, software_alpha = _software_mesh_overlay(base, pred, focal, k, mesh_opacity, body_model.faces.cpu().numpy())
                     if transparent:
                         alpha = np.maximum(alpha, software_alpha)
                 elif show_mesh and len(pred) and hasattr(render_meshes, "__call__"):
@@ -333,8 +346,9 @@ class MultiHMR2VideoRender:
                 if show_mesh and len(pred):
                     try:
                         session = _session(False)
+                        body_model = session.model.full_body_decoder.lowres_body_model if analysis.get("lowres") else session.model.full_body_decoder.body_model
                         focal, k = _camera_to_frame(pred.K.numpy(), base.shape)
-                        base, software_alpha = _software_mesh_overlay(base, pred, focal, k, mesh_opacity)
+                        base, software_alpha = _software_mesh_overlay(base, pred, focal, k, mesh_opacity, body_model.faces.cpu().numpy())
                         if transparent:
                             alpha = np.maximum(alpha, software_alpha)
                     except Exception as fallback_exc:
