@@ -94,11 +94,11 @@ def _as_uint8(frame: torch.Tensor) -> np.ndarray:
     return (array[..., :3] * 255.0 + 0.5).astype(np.uint8)
 
 
-def _cache_key(images: torch.Tensor, fps: float, conf: float, nms: float, lowres: bool) -> str:
+def _cache_key(images: torch.Tensor, fps: float, conf: float, nms: float, lowres: bool, model_size: int) -> str:
     digest = hashlib.sha256()
     for frame in images:
         digest.update(_as_uint8(frame).tobytes())
-    digest.update(json.dumps([fps, conf, nms, lowres, "0.1.0"], sort_keys=True).encode())
+    digest.update(json.dumps([fps, conf, nms, lowres, model_size, "0.1.1"], sort_keys=True).encode())
     return digest.hexdigest()
 
 
@@ -118,9 +118,21 @@ def _track_frame(tracker, session, frame_pred, time):
     return frame_pred
 
 
-def _load_or_analyze(images, fps, conf_thresh, dist_thresh_nms, lowres, compile_model, segment_size):
+def _configure_session_input_size(session, model_size: int) -> None:
+    from multihmr2.datasets.itw_image import ImagePreproc
+
+    model_size = int(model_size)
+    if getattr(session, "img_size", None) != model_size:
+        session.preprocessor = ImagePreproc(model_size, session.patch_size)
+        session.img_size = model_size
+
+
+def _load_or_analyze(images, fps, conf_thresh, dist_thresh_nms, lowres, compile_model, segment_size, model_size):
     CACHE_ROOT.mkdir(parents=True, exist_ok=True)
-    key = _cache_key(images, fps, conf_thresh, dist_thresh_nms, lowres)
+    model_size = int(model_size)
+    if model_size not in (384, 512, 640, 768):
+        raise ValueError(f"model_size 必须是 384、512、640 或 768，实际为 {model_size}")
+    key = _cache_key(images, fps, conf_thresh, dist_thresh_nms, lowres, model_size)
     cache_path = CACHE_ROOT / f"{key}.pt"
     if cache_path.is_file():
         LOGGER.info("Multi-HMR2 cache hit: %s", cache_path)
@@ -128,6 +140,7 @@ def _load_or_analyze(images, fps, conf_thresh, dist_thresh_nms, lowres, compile_
 
     _, infer_image, _, FeatPelvisTracker = _backend()
     session = _session(compile_model)
+    _configure_session_input_size(session, model_size)
     tracker = FeatPelvisTracker()
     tracker.reset()
     preds = []
@@ -199,14 +212,14 @@ def _camera_to_frame(k: np.ndarray, frame_shape, model_size=768, patch_size=16) 
     return focal, princpt
 
 
-def _fallback_overlay(image: np.ndarray, pred, show_skeleton: bool, show_id: bool) -> np.ndarray:
+def _fallback_overlay(image: np.ndarray, pred, show_skeleton: bool, show_id: bool, model_size=768) -> np.ndarray:
     import cv2
 
     out = image.copy()
     if len(pred) == 0:
         return out
     colors = [(40, 120, 255), (70, 210, 100), (220, 90, 180), (255, 180, 40)]
-    joints = _model_points_to_frame(pred.persons.j2d.detach().cpu().numpy(), image.shape)
+    joints = _model_points_to_frame(pred.persons.j2d.detach().cpu().numpy(), image.shape, model_size=model_size)
     track_id = getattr(pred.persons, "track_id", None)
     ids = track_id.detach().cpu().numpy() if track_id is not None else None
     for i, pts in enumerate(joints):
@@ -285,6 +298,7 @@ class MultiHMR2VideoAnalyze:
             "audio": ("AUDIO", {"tooltip": "可选音频透传；最终请将原始音频直接连接到 VHS Video Combine。"}),
             "video_info": ("VHS_VIDEOINFO", {"tooltip": "VHS 视频元数据，用于读取真实 FPS；建议连接 VHS Load Video 的 video_info。"}),
             "segment_size": ("INT", {"default": 120, "min": 0, "max": 10000, "step": 1, "tooltip": "每段处理的帧数。120 适合长视频；0 表示不主动分段。分段之间仍共享 tracker，Track ID 保持连续。"}),
+            "model_size": (["384", "512", "640", "768"], {"default": "768", "tooltip": "模型输入最大边长度（像素）。越大细节和小人物检测越好，但速度和显存开销更高；最大为 768，推荐 768。"}),
         }}
 
     RETURN_TYPES = ("MULTI_HMR2_ANALYSIS", "INT", "AUDIO", "VHS_VIDEOINFO")
@@ -292,10 +306,11 @@ class MultiHMR2VideoAnalyze:
     FUNCTION = "analyze"
     CATEGORY = "MultiHMR2/Video"
 
-    def analyze(self, images, frame_count, conf_thresh, dist_thresh_nms, lowres, compile_model, segment_size=120, audio=None, video_info=None):
+    def analyze(self, images, frame_count, conf_thresh, dist_thresh_nms, lowres, compile_model, segment_size=120, model_size="768", audio=None, video_info=None):
         fps = float((video_info or {}).get("loaded_fps", 30.0))
-        preds, key = _load_or_analyze(images, fps, conf_thresh, dist_thresh_nms, lowres, compile_model, segment_size)
-        return ({"preds": preds, "cache_key": key, "fps": fps, "lowres": bool(lowres)}, int(frame_count), audio, video_info or {})
+        model_size = int(model_size)
+        preds, key = _load_or_analyze(images, fps, conf_thresh, dist_thresh_nms, lowres, compile_model, segment_size, model_size)
+        return ({"preds": preds, "cache_key": key, "fps": fps, "lowres": bool(lowres), "model_size": model_size}, int(frame_count), audio, video_info or {})
 
 
 class MultiHMR2VideoRender:
@@ -321,6 +336,7 @@ class MultiHMR2VideoRender:
     def render(self, images, analysis, background, show_mesh, show_skeleton, show_track_id, mesh_opacity, track_id=-1, background_image=None, **kwargs):
         _, _, render_meshes, _ = _backend()
         preds = analysis["preds"]
+        model_size = int(analysis.get("model_size", 768))
         high_quality_masks = _birefnet_masks(images) if background == "transparent" else None
         output = []
         for index, (frame, pred) in enumerate(zip(images, preds)):
@@ -338,7 +354,7 @@ class MultiHMR2VideoRender:
                 if show_mesh and len(pred) and _use_software_mesh():
                     session = _session(False)
                     body_model = session.model.full_body_decoder.lowres_body_model if analysis.get("lowres") else session.model.full_body_decoder.body_model
-                    focal, k = _camera_to_frame(pred.K.numpy(), base.shape)
+                    focal, k = _camera_to_frame(pred.K.numpy(), base.shape, model_size=model_size)
                     base, software_alpha = _software_mesh_overlay(base, pred, focal, k, mesh_opacity, body_model.faces.cpu().numpy())
                     if transparent:
                         alpha = np.maximum(alpha, software_alpha)
@@ -349,7 +365,7 @@ class MultiHMR2VideoRender:
                     body_model = session.model.full_body_decoder.lowres_body_model if analysis.get("lowres") else session.model.full_body_decoder.body_model
                     verts = [v.reshape(-1, 3).numpy() for v in pred.persons.v3d]
                     faces = [body_model.faces.numpy() for _ in verts]
-                    focal, k = _camera_to_frame(pred.K.numpy(), base.shape)
+                    focal, k = _camera_to_frame(pred.K.numpy(), base.shape, model_size=model_size)
                     render_result = render_meshes(
                         base, verts, faces, {"focal": focal, "princpt": k},
                         # Stable light material makes the reconstructed body
@@ -367,14 +383,14 @@ class MultiHMR2VideoRender:
                     try:
                         session = _session(False)
                         body_model = session.model.full_body_decoder.lowres_body_model if analysis.get("lowres") else session.model.full_body_decoder.body_model
-                        focal, k = _camera_to_frame(pred.K.numpy(), base.shape)
+                        focal, k = _camera_to_frame(pred.K.numpy(), base.shape, model_size=model_size)
                         base, software_alpha = _software_mesh_overlay(base, pred, focal, k, mesh_opacity, body_model.faces.cpu().numpy())
                         if transparent:
                             alpha = np.maximum(alpha, software_alpha)
                     except Exception as fallback_exc:
                         LOGGER.warning("Software mesh fallback unavailable on frame %s: %s", index, fallback_exc)
             if show_skeleton or show_track_id:
-                base = _fallback_overlay(base, pred, show_skeleton, show_track_id)
+                base = _fallback_overlay(base, pred, show_skeleton, show_track_id, model_size=model_size)
             if transparent:
                 rgba = np.concatenate([base, alpha[..., None]], axis=-1)
                 output.append(torch.from_numpy(rgba.astype(np.float32) / 255.0))

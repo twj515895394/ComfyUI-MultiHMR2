@@ -364,7 +364,11 @@ class Decoder(nn.Module):
 
         # Human primary keypoint 2D location
         loc = self.mlp_loc(y)
-        loc = 1.2 * self.grid_size * self.patch_size * torch.sigmoid(loc)
+        # Keep the predicted image coordinates in the actual preprocessor
+        # canvas.  The checkpoint was trained at 768, but the encoder accepts
+        # smaller patch grids; scaling by the current grid keeps K, 2D points,
+        # and downstream rendering in the same coordinate system.
+        loc = 1.2 * max(nx, ny) * self.patch_size * torch.sigmoid(loc)
 
         # Translation in camera space
         _dist = self.mlp_dist(y)
