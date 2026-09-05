@@ -29,6 +29,24 @@ def _use_software_mesh() -> bool:
     return os.environ.get("MULTIHMR2_FORCE_SOFTWARE") == "1"
 
 
+def _ensure_native_opengl() -> None:
+    """Repair a previously imported EGL platform on Windows."""
+    if os.name != "nt":
+        return
+    platform_module = sys.modules.get("OpenGL.platform")
+    platform_obj = getattr(platform_module, "PLATFORM", None) if platform_module else None
+    if platform_obj is None or type(platform_obj).__name__ == "Win32Platform":
+        return
+    from OpenGL.platform.win32 import Win32Platform
+
+    native_platform = Win32Platform()
+    native_platform.install(platform_module.__dict__)
+    LOGGER.warning(
+        "MultiHMR2 switched preloaded PyOpenGL platform from %s to Win32Platform",
+        type(platform_obj).__name__,
+    )
+
+
 def _backend():
     """Import the bundled backend lazily so missing optional deps do not block ComfyUI."""
     package_root = str(PLUGIN_ROOT)
@@ -41,6 +59,7 @@ def _backend():
         if os.name == "nt" and os.environ.get("PYOPENGL_PLATFORM") in {"egl", "osmesa"}:
             LOGGER.warning("Ignoring incompatible PYOPENGL_PLATFORM=%s on Windows; using native WGL", os.environ["PYOPENGL_PLATFORM"])
             os.environ.pop("PYOPENGL_PLATFORM", None)
+        _ensure_native_opengl()
         from multihmr2 import init_hmr_session, infer_image
         from multihmr2.utils.render import render_meshes
         from multihmr2.tracker import FeatPelvisTracker
