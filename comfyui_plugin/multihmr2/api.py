@@ -131,6 +131,7 @@ class InferenceSession(object):
         self.model = model
         self.device = device
         self.use_cuda = device.type == "cuda"
+        logger.info("Multi-HMR2 inference device: %s", self.device)
 
         ## Anny
         self.body_model_world = anny.create_fullbody_model(
@@ -196,9 +197,32 @@ class InferenceSession(object):
                     lowres=lowres,
                 )
 
+        # Cache management belongs at the end of a complete node execution.
+        # Emptying it here would synchronize and stall every video frame.
         pred_list = [p.to("cpu") for p in pred_list]
-        torch.cuda.empty_cache()
         return pred_list[0]
+
+    def batch(
+        self,
+        images: list[np.ndarray],
+        conf_thresh: float = 0.4,
+        dist_thresh_nms: float = 0.25,
+        lowres: bool = False,
+    ) -> list[DecoderOutput]:
+        """Run several same-size video frames in one GPU forward pass."""
+        if not images:
+            return []
+        x = torch.stack([self.preprocessor(image) for image in images], dim=0)
+        with torch.inference_mode():
+            with torch.amp.autocast(device_type="cuda", enabled=self.use_cuda):
+                pred_list = self.model(
+                    x.to(self.device, non_blocking=self.use_cuda),
+                    conf_thresh=conf_thresh,
+                    dist_thresh_nms=dist_thresh_nms,
+                    lowres=lowres,
+                )
+        # Synchronize once for the complete batch instead of once per frame.
+        return [prediction.to("cpu") for prediction in pred_list]
 
 
 def init_hmr_session(
@@ -239,6 +263,22 @@ def infer_image(
     """
     return session(
         img_path,
+        conf_thresh=conf_thresh,
+        dist_thresh_nms=dist_thresh_nms,
+        lowres=lowres,
+    )
+
+
+def infer_batch(
+    session: InferenceSession,
+    images: list[np.ndarray],
+    conf_thresh: float = 0.4,
+    dist_thresh_nms: float = 0.25,
+    lowres: bool = False,
+) -> list[DecoderOutput]:
+    """Run a batch of same-size video frames on the active session."""
+    return session.batch(
+        images,
         conf_thresh=conf_thresh,
         dist_thresh_nms=dist_thresh_nms,
         lowres=lowres,

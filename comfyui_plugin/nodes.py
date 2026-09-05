@@ -62,10 +62,10 @@ def _backend():
             LOGGER.warning("Ignoring incompatible PYOPENGL_PLATFORM=%s on Windows; using native WGL", os.environ["PYOPENGL_PLATFORM"])
             os.environ.pop("PYOPENGL_PLATFORM", None)
         _ensure_native_opengl()
-        from multihmr2 import init_hmr_session, infer_image
+        from multihmr2 import init_hmr_session, infer_image, infer_batch
         from multihmr2.utils.render import render_meshes
         from multihmr2.tracker import FeatPelvisTracker
-        return init_hmr_session, infer_image, render_meshes, FeatPelvisTracker
+        return init_hmr_session, infer_image, infer_batch, render_meshes, FeatPelvisTracker
     except Exception as exc:
         raise RuntimeError(
             "MultiHMR2 依赖未就绪。请使用 ComfyUI 自带 Python 安装 "
@@ -83,7 +83,7 @@ def _session(compile_model: bool):
         hub_root = CACHE_ROOT / "torch_hub"
         hub_root.mkdir(parents=True, exist_ok=True)
         torch.hub.set_dir(str(hub_root))
-        init_hmr_session, _, _, _ = _backend()
+        init_hmr_session, _, _, _, _ = _backend()
         LOGGER.info("Loading Multi-HMR2 checkpoint: %s", MODEL_PATH)
         _SESSION_CACHE[key] = init_hmr_session(MODEL_PATH, compile_model=compile_model)
     return _SESSION_CACHE[key]
@@ -221,7 +221,7 @@ def _fill_track_gaps(preds, max_gap: int):
     return filled
 
 
-def _load_or_analyze(images, fps, conf_thresh, dist_thresh_nms, lowres, compile_model, segment_size, model_size, track_hold_frames):
+def _load_or_analyze(images, fps, conf_thresh, dist_thresh_nms, lowres, compile_model, segment_size, model_size, track_hold_frames, inference_batch_size):
     CACHE_ROOT.mkdir(parents=True, exist_ok=True)
     model_size = int(model_size)
     if model_size not in (384, 512, 640, 768):
@@ -235,7 +235,7 @@ def _load_or_analyze(images, fps, conf_thresh, dist_thresh_nms, lowres, compile_
         LOGGER.info("Multi-HMR2 cache hit: %s", cache_path)
         return torch.load(cache_path, map_location="cpu", weights_only=False), key
 
-    _, infer_image, _, FeatPelvisTracker = _backend()
+    _, infer_image, infer_batch, _, FeatPelvisTracker = _backend()
     session = _session(compile_model)
     _configure_session_input_size(session, model_size)
     tracker = FeatPelvisTracker()
@@ -245,14 +245,18 @@ def _load_or_analyze(images, fps, conf_thresh, dist_thresh_nms, lowres, compile_
     for start in range(0, len(images), step):
         end = min(start + step, len(images))
         LOGGER.info("MultiHMR2 analyzing segment %s-%s/%s", start, end, len(images))
-        for time in range(start, end):
-            frame_pred = infer_image(
-                session, _as_uint8(images[time]),
+        batch_size = max(1, int(inference_batch_size))
+        for batch_start in range(start, end, batch_size):
+            batch_end = min(batch_start + batch_size, end)
+            batch_frames = [_as_uint8(images[time]) for time in range(batch_start, batch_end)]
+            frame_preds = infer_batch(
+                session, batch_frames,
                 conf_thresh=float(conf_thresh),
                 dist_thresh_nms=float(dist_thresh_nms),
                 lowres=bool(lowres),
             )
-            preds.append(_track_frame(tracker, session, frame_pred, time))
+            for time, frame_pred in zip(range(batch_start, batch_end), frame_preds):
+                preds.append(_track_frame(tracker, session, frame_pred, time))
     preds = _fill_track_gaps(preds, track_hold_frames)
     torch.save(preds, cache_path)
     return preds, key
@@ -510,6 +514,7 @@ class MultiHMR2VideoAnalyze:
             "segment_size": ("INT", {"default": 120, "min": 0, "max": 10000, "step": 1, "tooltip": "每段处理的帧数。120 适合长视频；0 表示不主动分段。分段之间仍共享 tracker，Track ID 保持连续。"}),
             "model_size": (["384", "512", "640", "768"], {"default": "768", "tooltip": "模型输入最大边长度（像素）。越大细节和小人物检测越好，但速度和显存开销更高；最大为 768，推荐 768。"}),
             "track_hold_frames": (["0", "2", "4", "6", "8"], {"default": "4", "tooltip": "短时漏检补帧长度。对同一 Track ID 在短暂漏检期间插值保持人体，减少视频闪烁；0 表示关闭，推荐 4。"}),
+            "inference_batch_size": (["1", "2", "4", "8"], {"default": "4", "tooltip": "一次送入 GPU 的视频帧数。数值越大 GPU 利用率通常越高，但显存占用也越大；48GB 显存推荐 4 或 8。"}),
         }}
 
     RETURN_TYPES = ("MULTI_HMR2_ANALYSIS", "INT", "AUDIO", "VHS_VIDEOINFO")
@@ -517,12 +522,15 @@ class MultiHMR2VideoAnalyze:
     FUNCTION = "analyze"
     CATEGORY = "MultiHMR2/Video"
 
-    def analyze(self, images, frame_count, conf_thresh, dist_thresh_nms, lowres, compile_model, segment_size=120, model_size="768", track_hold_frames="4", audio=None, video_info=None):
+    def analyze(self, images, frame_count, conf_thresh, dist_thresh_nms, lowres, compile_model, segment_size=120, model_size="768", track_hold_frames="4", inference_batch_size="4", audio=None, video_info=None):
         fps = float((video_info or {}).get("loaded_fps", 30.0))
         model_size = int(model_size)
         track_hold_frames = int(track_hold_frames)
-        preds, key = _load_or_analyze(images, fps, conf_thresh, dist_thresh_nms, lowres, compile_model, segment_size, model_size, track_hold_frames)
-        return ({"preds": preds, "cache_key": key, "fps": fps, "lowres": bool(lowres), "model_size": model_size, "track_hold_frames": track_hold_frames}, int(frame_count), audio, video_info or {})
+        inference_batch_size = int(inference_batch_size)
+        if inference_batch_size not in (1, 2, 4, 8):
+            raise ValueError(f"inference_batch_size 必须是 1、2、4 或 8，实际为 {inference_batch_size}")
+        preds, key = _load_or_analyze(images, fps, conf_thresh, dist_thresh_nms, lowres, compile_model, segment_size, model_size, track_hold_frames, inference_batch_size)
+        return ({"preds": preds, "cache_key": key, "fps": fps, "lowres": bool(lowres), "model_size": model_size, "track_hold_frames": track_hold_frames, "inference_batch_size": inference_batch_size}, int(frame_count), audio, video_info or {})
 
 
 class MultiHMR2VideoRender:
@@ -549,7 +557,7 @@ class MultiHMR2VideoRender:
     CATEGORY = "MultiHMR2/Video"
 
     def render(self, images, analysis, background, show_mesh, show_skeleton, show_track_id, mesh_opacity, track_id=-1, mesh_color="track_color", keep_model_loaded=False, remove_source_person=True, background_image=None, **kwargs):
-        _, _, render_meshes, _ = _backend()
+        _, _, _, render_meshes, _ = _backend()
         preds = analysis["preds"]
         model_size = int(analysis.get("model_size", 768))
         source_masks = (

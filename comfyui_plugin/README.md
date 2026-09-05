@@ -110,6 +110,7 @@ X:\ComfyUI-aki-v2\ComfyUI\temp\multihmr2\
 | `segment_size` | `120` | 长视频分段处理帧数；分段之间共享 tracker |
 | `model_size` | `384 / 512 / 640 / 768`，默认 `768` | 输入图像最大边；768 质量最好，较小值更快 |
 | `track_hold_frames` | `0 / 2 / 4 / 6 / 8`，默认 `4` | 对短时漏检进行姿态插值，减少白模闪烁 |
+| `inference_batch_size` | `1 / 2 / 4 / 8`，默认 `4` | 一次送入 GPU 的视频帧数；显存充足时可设为 `8`，通常比逐帧推理更快 |
 
 ### MultiHMR2 Video Render
 
