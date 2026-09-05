@@ -203,16 +203,16 @@ class MultiHMR2VideoAnalyze:
     @classmethod
     def INPUT_TYPES(cls):
         return {"required": {
-            "images": ("IMAGE",),
-            "frame_count": ("INT", {"default": 1, "min": 1}),
-            "conf_thresh": ("FLOAT", {"default": 0.4, "min": 0.0, "max": 1.0, "step": 0.01}),
-            "dist_thresh_nms": ("FLOAT", {"default": 0.25, "min": 0.01, "max": 2.0, "step": 0.01}),
-            "lowres": ("BOOLEAN", {"default": False}),
-            "compile_model": ("BOOLEAN", {"default": False}),
+            "images": ("IMAGE", {"tooltip": "来自 VHS Load Video 的视频帧序列；建议保持原始帧顺序。"}),
+            "frame_count": ("INT", {"default": 1, "min": 1, "tooltip": "视频帧数，通常直接连接 VHS 的 frame_count 输出。"}),
+            "conf_thresh": ("FLOAT", {"default": 0.4, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "人物检测置信度阈值。越高误检越少，但远处或遮挡人物可能被过滤；推荐 0.40。"}),
+            "dist_thresh_nms": ("FLOAT", {"default": 0.25, "min": 0.01, "max": 2.0, "step": 0.01, "tooltip": "3D 骨盆距离 NMS 阈值（米）。用于合并过近的重复检测；推荐 0.25。"}),
+            "lowres": ("BOOLEAN", {"default": False, "tooltip": "使用低分辨率 Anny 身体模型。速度更快、显存更低，但网格细节较少。"}),
+            "compile_model": ("BOOLEAN", {"default": False, "tooltip": "启用 torch.compile。视频重复推理可能更快，但首次运行会额外编译且占用更多显存。"}),
         }, "optional": {
-            "audio": ("AUDIO",),
-            "video_info": ("VHS_VIDEOINFO",),
-            "segment_size": ("INT", {"default": 120, "min": 0, "max": 10000, "step": 1}),
+            "audio": ("AUDIO", {"tooltip": "可选音频透传；最终请将原始音频直接连接到 VHS Video Combine。"}),
+            "video_info": ("VHS_VIDEOINFO", {"tooltip": "VHS 视频元数据，用于读取真实 FPS；建议连接 VHS Load Video 的 video_info。"}),
+            "segment_size": ("INT", {"default": 120, "min": 0, "max": 10000, "step": 1, "tooltip": "每段处理的帧数。120 适合长视频；0 表示不主动分段。分段之间仍共享 tracker，Track ID 保持连续。"}),
         }}
 
     RETURN_TYPES = ("MULTI_HMR2_ANALYSIS", "INT", "AUDIO", "VHS_VIDEOINFO")
@@ -230,15 +230,15 @@ class MultiHMR2VideoRender:
     @classmethod
     def INPUT_TYPES(cls):
         return {"required": {
-            "images": ("IMAGE",),
-            "analysis": ("MULTI_HMR2_ANALYSIS",),
-            "background": (["original", "green_screen", "transparent"], {"default": "original"}),
-            "show_mesh": ("BOOLEAN", {"default": True}),
-            "show_skeleton": ("BOOLEAN", {"default": True}),
-            "show_track_id": ("BOOLEAN", {"default": True}),
-            "mesh_opacity": ("FLOAT", {"default": 0.65, "min": 0.0, "max": 1.0, "step": 0.05}),
+            "images": ("IMAGE", {"tooltip": "原始视频帧；必须与 Analyze 节点使用同一批帧。"}),
+            "analysis": ("MULTI_HMR2_ANALYSIS", {"tooltip": "MultiHMR2 Video Analyze 输出的人体 3D 分析缓存。"}),
+            "background": (["original", "green_screen", "transparent"], {"default": "original", "tooltip": "背景模式：original 保留原背景；green_screen 输出纯绿色背景；transparent 输出 RGBA 透明背景。"}),
+            "show_mesh": ("BOOLEAN", {"default": True, "tooltip": "显示 3D 人体网格。关闭后仍可显示骨骼和 Track ID。"}),
+            "show_skeleton": ("BOOLEAN", {"default": True, "tooltip": "显示 2D 骨骼连接线，用于检查姿态和坐标对齐。"}),
+            "show_track_id": ("BOOLEAN", {"default": True, "tooltip": "在人物附近显示跨帧跟踪 ID。"}),
+            "mesh_opacity": ("FLOAT", {"default": 0.65, "min": 0.0, "max": 1.0, "step": 0.05, "tooltip": "3D 网格叠加透明度。0 近似隐藏，1 为完全覆盖；推荐 0.65–0.85。"}),
         }, "optional": {
-            "track_id": ("INT", {"default": -1, "min": -1, "max": 10000, "step": 1}),
+            "track_id": ("INT", {"default": -1, "min": -1, "max": 10000, "step": 1, "tooltip": "只渲染指定 Track ID；-1 表示渲染全部人物。Track ID 来自 Analyze 节点。"}),
         }}
 
     RETURN_TYPES = ("IMAGE", "FLOAT")
