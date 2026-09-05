@@ -242,7 +242,7 @@ def _software_mesh_overlay(image: np.ndarray, pred, focal: np.ndarray, princpt: 
             edge2 = verts[tri[2]] - verts[tri[0]]
             normal = np.cross(edge1, edge2)
             light = float(np.clip(abs(normal[1]) / (np.linalg.norm(normal) + 1e-6), 0.0, 1.0))
-            shade = int(155 + 90 * light)
+            shade = int(210 + 45 * light)
             cv2.fillConvexPoly(overlay, polygon, (shade, shade, shade), cv2.LINE_AA)
             cv2.fillConvexPoly(alpha_mask, polygon, 255, cv2.LINE_AA)
             cv2.polylines(overlay, [polygon], True, (105, 105, 105), 1, cv2.LINE_AA)
@@ -288,7 +288,7 @@ class MultiHMR2VideoRender:
             "show_mesh": ("BOOLEAN", {"default": True, "tooltip": "显示 3D 人体网格。关闭后仍可显示骨骼和 Track ID。"}),
             "show_skeleton": ("BOOLEAN", {"default": True, "tooltip": "显示 2D 骨骼连接线，用于检查姿态和坐标对齐。"}),
             "show_track_id": ("BOOLEAN", {"default": True, "tooltip": "在人物附近显示跨帧跟踪 ID。"}),
-            "mesh_opacity": ("FLOAT", {"default": 0.65, "min": 0.0, "max": 1.0, "step": 0.05, "tooltip": "3D 网格叠加透明度。0 近似隐藏，1 为完全覆盖；推荐 0.65–0.85。"}),
+            "mesh_opacity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05, "tooltip": "3D 白模不透明度。1.0 为完全不透明（推荐）；较低值会让原视频背景透过网格。"}),
         }, "optional": {
             "track_id": ("INT", {"default": -1, "min": -1, "max": 10000, "step": 1, "tooltip": "只渲染指定 Track ID；-1 表示渲染全部人物。Track ID 来自 Analyze 节点。"}),
         }}
