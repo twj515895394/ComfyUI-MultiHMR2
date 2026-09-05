@@ -284,6 +284,30 @@ def _normalise_segmenter_masks(result):
     return np.clip(masks, 0.0, 1.0)
 
 
+class _BiRefNetLLSegmenter:
+    """Adapter for the installed BiRefNet loader that does not edit model files."""
+
+    def __init__(self, model_path: Path):
+        import folder_paths
+        from comfyui_birefnet_ll import birefnetNode
+
+        folder_paths.add_model_folder_path("birefnet", str(model_path.parent))
+        loaded = birefnetNode.LoadRembgByBiRefNetModel().load_model(
+            model_path.name, "AUTO", dtype="float16"
+        )
+        self.model = loaded[0]
+        self.mask_node = birefnetNode.GetMaskByBiRefNet()
+
+    def process_image(self, images):
+        return self.mask_node.get_mask(
+            self.model, images, width=1024, height=1024,
+            upscale_method="bilinear", mask_threshold=0.0,
+        )[0]
+
+    def to(self, device):
+        self.model[0].to(device)
+
+
 def _cached_segmenter(mode: str, module_name: str, class_name: str):
     global _SEGMENTER_CACHE
     if not isinstance(_SEGMENTER_CACHE, tuple) or _SEGMENTER_CACHE[0] != mode:
@@ -292,11 +316,22 @@ def _cached_segmenter(mode: str, module_name: str, class_name: str):
     return _SEGMENTER_CACHE[1]
 
 
+def _cached_birefnet_ll(model_path: Path):
+    global _SEGMENTER_CACHE
+    cache_key = ("birefnet_ll", str(model_path))
+    if not isinstance(_SEGMENTER_CACHE, tuple) or _SEGMENTER_CACHE[:2] != cache_key:
+        _SEGMENTER_CACHE = (cache_key[0], cache_key[1], _BiRefNetLLSegmenter(model_path))
+    return _SEGMENTER_CACHE[2]
+
+
 def _birefnet_masks(images):
     """Use the installed ComfyUI-RMBG segmenter without forcing a download."""
     rmbg_dir = COMFY_ROOT / "custom_nodes" / "ComfyUI-RMBG" / "py"
     if str(rmbg_dir) not in sys.path:
         sys.path.insert(0, str(rmbg_dir))
+    custom_nodes_dir = COMFY_ROOT / "custom_nodes"
+    if str(custom_nodes_dir) not in sys.path:
+        sys.path.insert(0, str(custom_nodes_dir))
 
     birefnet_dir = COMFY_ROOT / "models" / "RMBG" / "BiRefNet"
     birefnet_files = (
@@ -304,15 +339,13 @@ def _birefnet_masks(images):
     )
     if all((birefnet_dir / filename).is_file() for filename in birefnet_files):
         try:
-            segmenter = _cached_segmenter("birefnet", "AILab_BiRefNet", "BiRefNetRMBG")
-            result = segmenter.process_image(
-                images, model="BiRefNet-portrait", sensitivity=1.0,
-                mask_blur=0, mask_offset=0, invert_output=False,
-                refine_foreground=True, background="Alpha", background_color="#000000",
-            )
+            portrait_path = birefnet_dir / "BiRefNet-portrait.safetensors"
+            segmenter = _cached_birefnet_ll(portrait_path)
+            result = segmenter.process_image(images)
+            LOGGER.info("Using cached BiRefNet-portrait model")
             return _normalise_segmenter_masks(result)
         except Exception as exc:
-            LOGGER.warning("BiRefNet-portrait failed; trying cached RMBG-2.0: %s", exc)
+            LOGGER.warning("BiRefNet-portrait loader failed; trying cached RMBG-2.0: %s", exc)
 
     rmbg20_dir = COMFY_ROOT / "models" / "RMBG" / "RMBG-2.0"
     rmbg20_files = ("config.json", "model.safetensors", "birefnet.py", "BiRefNet_config.py")

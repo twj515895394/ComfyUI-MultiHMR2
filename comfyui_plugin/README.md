@@ -139,6 +139,8 @@ X:\ComfyUI-aki-v2\ComfyUI\temp\multihmr2\
 
 如果没有安装 ComfyUI-RMBG，日志会提示并保留原来的合成行为。若不接受背景修复可能产生的纹理变化，建议使用 `green_screen` 或 `transparent` 背景模式。
 
+`Lucida.safetensors` 也是背景移除模型，但它重点优化透明物体、伪装物体、文字 Logo、发光特效和插画，不作为本插件的真人视频分割模型；MultiHMR2 优先使用 `BiRefNet-portrait`。
+
 ## 5. Windows OpenGL 说明
 
 Multi-HMR2 原生网格渲染使用 `pyrender.OffscreenRenderer`。
