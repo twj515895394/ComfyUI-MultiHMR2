@@ -273,8 +273,23 @@ def _birefnet_masks(images):
         masks = masks.detach().cpu().float().clamp(0, 1).numpy()
         return masks[:, 0] if masks.ndim == 4 else masks
     except Exception as exc:
-        LOGGER.warning("BiRefNet unavailable; transparent mode will use mesh alpha: %s", exc)
+        LOGGER.warning(
+            "BiRefNet unavailable; high-quality source-person cleanup is skipped "
+            "(transparent mode falls back to mesh alpha): %s",
+            exc,
+        )
         return None
+
+
+def _remove_source_person(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """Remove source-person pixels before compositing the reconstructed mesh."""
+    import cv2
+
+    mask_uint8 = (np.asarray(mask).clip(0, 1) > 0.35).astype(np.uint8) * 255
+    # Include the antialiased fringe so the source silhouette cannot form a
+    # visible outline around the replacement mesh.
+    mask_uint8 = cv2.dilate(mask_uint8, np.ones((3, 3), np.uint8), iterations=1)
+    return cv2.inpaint(image, mask_uint8, 5, cv2.INPAINT_TELEA)
 
 
 def _model_points_to_frame(points: np.ndarray, frame_shape, model_size=768, patch_size=16) -> np.ndarray:
@@ -437,6 +452,7 @@ class MultiHMR2VideoRender:
         }, "optional": {
             "track_id": ("INT", {"default": -1, "min": -1, "max": 10000, "step": 1, "tooltip": "只渲染指定 Track ID；-1 表示渲染全部人物。Track ID 来自 Analyze 节点。"}),
             "keep_model_loaded": ("BOOLEAN", {"default": False, "tooltip": "是否保留模型在显存中。关闭后本次输出完成会释放模型和 CUDA 缓存，节省显存但下次运行需要重新加载。"}),
+            "remove_source_person": ("BOOLEAN", {"default": True, "tooltip": "original 背景模式下先移除原视频人物并修复背景，避免原人物轮廓露在白模外；需要 ComfyUI-RMBG。"}),
         }}
 
     RETURN_TYPES = ("IMAGE", "FLOAT")
@@ -444,10 +460,15 @@ class MultiHMR2VideoRender:
     FUNCTION = "render"
     CATEGORY = "MultiHMR2/Video"
 
-    def render(self, images, analysis, background, show_mesh, show_skeleton, show_track_id, mesh_opacity, track_id=-1, mesh_color="track_color", keep_model_loaded=False, background_image=None, **kwargs):
+    def render(self, images, analysis, background, show_mesh, show_skeleton, show_track_id, mesh_opacity, track_id=-1, mesh_color="track_color", keep_model_loaded=False, remove_source_person=True, background_image=None, **kwargs):
         _, _, render_meshes, _ = _backend()
         preds = analysis["preds"]
         model_size = int(analysis.get("model_size", 768))
+        source_masks = (
+            _birefnet_masks(images)
+            if background == "original" and show_mesh and remove_source_person and track_id < 0
+            else None
+        )
         high_quality_masks = _birefnet_masks(images) if background == "transparent" else None
         output = []
         for index, (frame, pred) in enumerate(zip(images, preds)):
@@ -456,6 +477,11 @@ class MultiHMR2VideoRender:
                 pred = type(pred)(K=pred.K, persons=pred.persons[current_track_id == track_id])
             mesh_colors = _mesh_colors(pred, mesh_color)
             base = _as_uint8(frame)
+            # Only erase source pixels on frames that have a replacement
+            # mesh.  A detector miss must not turn an untouched source frame
+            # into an inpainted hole.
+            if source_masks is not None and len(pred) > 0:
+                base = _remove_source_person(base, source_masks[index])
             transparent = background == "transparent"
             if background == "green_screen" or transparent:
                 base = np.zeros_like(base)

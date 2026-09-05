@@ -65,7 +65,7 @@ $py = 'X:\ComfyUI-aki-v2\python\python.exe'
 - VHS（Video Helper Suite）：加载视频、输出视频和传递视频元数据；
 - FFmpeg：VHS 和视频处理流程需要；
 - CUDA 驱动与可用的 PyTorch CUDA 环境（推荐，但 CPU 也可运行，只是速度较慢）；
-- `ComfyUI-RMBG`：只有使用 `transparent` 背景并需要高质量人像 alpha 时才需要。
+- `ComfyUI-RMBG`：使用 `transparent` 高质量 alpha，或使用 `original` 的原人物轮廓清除时需要。
 
 检查 Python 和 CUDA：
 
@@ -132,6 +132,12 @@ X:\ComfyUI-aki-v2\ComfyUI\temp\multihmr2\
 | `keep_model_loaded` | `false` | 输出后释放模型和 CUDA 缓存；连续多次运行可设为 true |
 
 多人默认颜色按原项目的 `demo_color[track_id]` 分配。当前内置 1008 个稳定颜色：前 8 个为人工指定颜色，其余为固定随机颜色。Track ID 超过颜色表范围后循环使用。
+
+### 原视频人物轮廓清除
+
+`remove_source_person` 默认为 `true`。当 `background=original` 且当前帧检测到白模时，插件会调用已安装的 ComfyUI-RMBG BiRefNet 人像分割，先移除原视频人物像素并修复背景，再合成 Multi-HMR2 白模，从而避免原人物轮廓残留在白模外。
+
+如果没有安装 ComfyUI-RMBG，日志会提示并保留原来的合成行为。若不接受背景修复可能产生的纹理变化，建议使用 `green_screen` 或 `transparent` 背景模式。
 
 ## 5. Windows OpenGL 说明
 
