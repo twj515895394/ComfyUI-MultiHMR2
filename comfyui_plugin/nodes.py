@@ -232,6 +232,12 @@ def _software_mesh_overlay(image: np.ndarray, pred, focal: np.ndarray, princpt: 
         pts = np.round(pts).astype(np.int32)
         pts[:, 0] = np.clip(pts[:, 0], 0, image.shape[1] - 1)
         pts[:, 1] = np.clip(pts[:, 1], 0, image.shape[0] - 1)
+        # Solid underlay prevents tiny gaps between projected triangles from
+        # revealing the source image.  The real triangles below still provide
+        # the mesh topology and shading.
+        hull = cv2.convexHull(pts[valid])
+        cv2.fillConvexPoly(overlay, hull, (225, 225, 225), cv2.LINE_AA)
+        cv2.fillConvexPoly(alpha_mask, hull, 255, cv2.LINE_AA)
         valid_faces = faces[(faces >= 0).all(axis=1) & (faces < len(verts)).all(axis=1)]
         valid_faces = valid_faces[np.isfinite(verts[valid_faces]).all(axis=(1, 2)) & (verts[valid_faces, 2] > 1e-5).all(axis=1)]
         # Painter's algorithm: far triangles first, near triangles last.
