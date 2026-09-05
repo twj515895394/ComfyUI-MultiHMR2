@@ -236,7 +236,7 @@ def _fallback_overlay(image: np.ndarray, pred, show_skeleton: bool, show_id: boo
     return out
 
 
-def _software_mesh_overlay(image: np.ndarray, pred, focal: np.ndarray, princpt: np.ndarray, opacity: float, faces):
+def _software_mesh_overlay(image: np.ndarray, pred, focal: np.ndarray, princpt: np.ndarray, opacity: float, faces, colors):
     """Rasterize the actual body triangles without requiring an OpenGL context.
 
     ComfyUI often runs headless on Windows, where pyrender cannot create a WGL
@@ -248,7 +248,7 @@ def _software_mesh_overlay(image: np.ndarray, pred, focal: np.ndarray, princpt: 
     overlay = image.copy()
     alpha_mask = np.zeros(image.shape[:2], dtype=np.uint8)
     faces = np.asarray(faces, dtype=np.int32).reshape(-1, 3)
-    for vertices in pred.persons.v3d.detach().cpu().numpy():
+    for person_index, vertices in enumerate(pred.persons.v3d.detach().cpu().numpy()):
         verts = vertices.reshape(-1, 3)
         z = verts[:, 2]
         valid = np.isfinite(verts).all(axis=1) & (z > 1e-5)
@@ -264,7 +264,8 @@ def _software_mesh_overlay(image: np.ndarray, pred, focal: np.ndarray, princpt: 
         # revealing the source image.  The real triangles below still provide
         # the mesh topology and shading.
         hull = cv2.convexHull(pts[valid])
-        cv2.fillConvexPoly(overlay, hull, (225, 225, 225), cv2.LINE_AA)
+        person_color = np.asarray(colors[person_index], dtype=np.float32) * 255.0
+        cv2.fillConvexPoly(overlay, hull, tuple(person_color.astype(np.uint8).tolist()), cv2.LINE_AA)
         cv2.fillConvexPoly(alpha_mask, hull, 255, cv2.LINE_AA)
         valid_faces = faces[(faces >= 0).all(axis=1) & (faces < len(verts)).all(axis=1)]
         valid_faces = valid_faces[np.isfinite(verts[valid_faces]).all(axis=(1, 2)) & (verts[valid_faces, 2] > 1e-5).all(axis=1)]
@@ -276,12 +277,23 @@ def _software_mesh_overlay(image: np.ndarray, pred, focal: np.ndarray, princpt: 
             edge2 = verts[tri[2]] - verts[tri[0]]
             normal = np.cross(edge1, edge2)
             light = float(np.clip(abs(normal[1]) / (np.linalg.norm(normal) + 1e-6), 0.0, 1.0))
-            shade = int(225 + 30 * light)
-            cv2.fillConvexPoly(overlay, polygon, (shade, shade, shade), cv2.LINE_AA)
+            shade = 0.82 + 0.18 * light
+            face_color = np.clip(person_color * shade, 0, 255).astype(np.uint8)
+            cv2.fillConvexPoly(overlay, polygon, tuple(face_color.tolist()), cv2.LINE_AA)
             cv2.fillConvexPoly(alpha_mask, polygon, 255, cv2.LINE_AA)
     amount = float(np.clip(opacity, 0.0, 1.0))
     blended = (image * (1.0 - amount) + overlay * amount).clip(0, 255).astype(np.uint8)
     return blended, alpha_mask
+
+
+def _mesh_colors(pred, color_mode: str):
+    from multihmr2.utils.color import demo_color
+
+    if color_mode == "white":
+        return [(0.92, 0.92, 0.92)] * len(pred)
+    ids = getattr(pred.persons, "track_id", None)
+    indices = range(len(pred)) if ids is None else ids.detach().cpu().flatten().tolist()
+    return [demo_color[int(person_id) % len(demo_color)] for person_id in indices]
 
 
 class MultiHMR2VideoAnalyze:
@@ -323,6 +335,7 @@ class MultiHMR2VideoRender:
             "show_mesh": ("BOOLEAN", {"default": True, "tooltip": "显示 3D 人体网格。关闭后仍可显示骨骼和 Track ID。"}),
             "show_skeleton": ("BOOLEAN", {"default": True, "tooltip": "显示 2D 骨骼连接线，用于检查姿态和坐标对齐。"}),
             "show_track_id": ("BOOLEAN", {"default": True, "tooltip": "在人物附近显示跨帧跟踪 ID。"}),
+            "mesh_color": (["track_color", "white"], {"default": "track_color", "tooltip": "网格颜色模式：track_color 按 Track ID 为不同人物分配稳定颜色；white 使用白色白模。"}),
             "mesh_opacity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05, "tooltip": "3D 白模不透明度。1.0 为完全不透明（推荐）；较低值会让原视频背景透过网格。"}),
         }, "optional": {
             "track_id": ("INT", {"default": -1, "min": -1, "max": 10000, "step": 1, "tooltip": "只渲染指定 Track ID；-1 表示渲染全部人物。Track ID 来自 Analyze 节点。"}),
@@ -333,7 +346,7 @@ class MultiHMR2VideoRender:
     FUNCTION = "render"
     CATEGORY = "MultiHMR2/Video"
 
-    def render(self, images, analysis, background, show_mesh, show_skeleton, show_track_id, mesh_opacity, track_id=-1, background_image=None, **kwargs):
+    def render(self, images, analysis, background, show_mesh, show_skeleton, show_track_id, mesh_opacity, track_id=-1, mesh_color="track_color", background_image=None, **kwargs):
         _, _, render_meshes, _ = _backend()
         preds = analysis["preds"]
         model_size = int(analysis.get("model_size", 768))
@@ -343,6 +356,7 @@ class MultiHMR2VideoRender:
             current_track_id = getattr(pred.persons, "track_id", None)
             if track_id >= 0 and current_track_id is not None:
                 pred = type(pred)(K=pred.K, persons=pred.persons[current_track_id == track_id])
+            mesh_colors = _mesh_colors(pred, mesh_color)
             base = _as_uint8(frame)
             transparent = background == "transparent"
             if background == "green_screen" or transparent:
@@ -355,7 +369,7 @@ class MultiHMR2VideoRender:
                     session = _session(False)
                     body_model = session.model.full_body_decoder.lowres_body_model if analysis.get("lowres") else session.model.full_body_decoder.body_model
                     focal, k = _camera_to_frame(pred.K.numpy(), base.shape, model_size=model_size)
-                    base, software_alpha = _software_mesh_overlay(base, pred, focal, k, mesh_opacity, body_model.faces.cpu().numpy())
+                    base, software_alpha = _software_mesh_overlay(base, pred, focal, k, mesh_opacity, body_model.faces.cpu().numpy(), mesh_colors)
                     if transparent:
                         alpha = np.maximum(alpha, software_alpha)
                 elif show_mesh and len(pred) and hasattr(render_meshes, "__call__"):
@@ -365,12 +379,13 @@ class MultiHMR2VideoRender:
                     body_model = session.model.full_body_decoder.lowres_body_model if analysis.get("lowres") else session.model.full_body_decoder.body_model
                     verts = [v.reshape(-1, 3).numpy() for v in pred.persons.v3d]
                     faces = [body_model.faces.numpy() for _ in verts]
+                    colors = mesh_colors
                     focal, k = _camera_to_frame(pred.K.numpy(), base.shape, model_size=model_size)
                     render_result = render_meshes(
                         base, verts, faces, {"focal": focal, "princpt": k},
                         # Stable light material makes the reconstructed body
                         # visibly read as a white model over the source footage.
-                        color=(0.92, 0.92, 0.92), return_mask=transparent,
+                        color=colors, return_mask=transparent,
                     )
                     if transparent:
                         rendered, alpha = render_result
@@ -384,7 +399,7 @@ class MultiHMR2VideoRender:
                         session = _session(False)
                         body_model = session.model.full_body_decoder.lowres_body_model if analysis.get("lowres") else session.model.full_body_decoder.body_model
                         focal, k = _camera_to_frame(pred.K.numpy(), base.shape, model_size=model_size)
-                        base, software_alpha = _software_mesh_overlay(base, pred, focal, k, mesh_opacity, body_model.faces.cpu().numpy())
+                        base, software_alpha = _software_mesh_overlay(base, pred, focal, k, mesh_opacity, body_model.faces.cpu().numpy(), mesh_colors)
                         if transparent:
                             alpha = np.maximum(alpha, software_alpha)
                     except Exception as fallback_exc:
