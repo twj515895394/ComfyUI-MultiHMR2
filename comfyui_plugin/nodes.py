@@ -139,6 +139,36 @@ def _birefnet_masks(images):
         return None
 
 
+def _model_points_to_frame(points: np.ndarray, frame_shape, model_size=768, patch_size=16) -> np.ndarray:
+    """Undo Multi-HMR2's longest-side resize and centered patch padding."""
+    height, width = frame_shape[:2]
+    scale = min(model_size / float(width), model_size / float(height))
+    resized_width = int(round(width * scale))
+    resized_height = int(round(height * scale))
+    padded_width = int(np.ceil(resized_width / patch_size) * patch_size)
+    padded_height = int(np.ceil(resized_height / patch_size) * patch_size)
+    pad_left = (padded_width - resized_width) // 2
+    pad_top = (padded_height - resized_height) // 2
+    mapped = points.astype(np.float32).copy()
+    mapped[..., 0] = (mapped[..., 0] - pad_left) / scale
+    mapped[..., 1] = (mapped[..., 1] - pad_top) / scale
+    return mapped
+
+
+def _camera_to_frame(k: np.ndarray, frame_shape, model_size=768, patch_size=16) -> tuple[np.ndarray, np.ndarray]:
+    height, width = frame_shape[:2]
+    scale = min(model_size / float(width), model_size / float(height))
+    resized_width = int(round(width * scale))
+    resized_height = int(round(height * scale))
+    padded_width = int(np.ceil(resized_width / patch_size) * patch_size)
+    padded_height = int(np.ceil(resized_height / patch_size) * patch_size)
+    pad_left = (padded_width - resized_width) // 2
+    pad_top = (padded_height - resized_height) // 2
+    focal = k[[0, 1], [0, 1]].astype(np.float32) / scale
+    princpt = np.array([(k[0, 2] - pad_left) / scale, (k[1, 2] - pad_top) / scale], dtype=np.float32)
+    return focal, princpt
+
+
 def _fallback_overlay(image: np.ndarray, pred, show_skeleton: bool, show_id: bool) -> np.ndarray:
     import cv2
 
@@ -146,7 +176,7 @@ def _fallback_overlay(image: np.ndarray, pred, show_skeleton: bool, show_id: boo
     if len(pred) == 0:
         return out
     colors = [(40, 120, 255), (70, 210, 100), (220, 90, 180), (255, 180, 40)]
-    joints = pred.persons.j2d.detach().cpu().numpy()
+    joints = _model_points_to_frame(pred.persons.j2d.detach().cpu().numpy(), image.shape)
     track_id = getattr(pred.persons, "track_id", None)
     ids = track_id.detach().cpu().numpy() if track_id is not None else None
     for i, pts in enumerate(joints):
@@ -234,8 +264,7 @@ class MultiHMR2VideoRender:
                     body_model = session.model.full_body_decoder.lowres_body_model if analysis.get("lowres") else session.model.full_body_decoder.body_model
                     verts = [v.reshape(-1, 3).numpy() for v in pred.persons.v3d]
                     faces = [body_model.faces.numpy() for _ in verts]
-                    k = pred.K[[0, 1], [-1, -1]].numpy()
-                    focal = pred.K[[0, 1], [0, 1]].numpy()
+                    focal, k = _camera_to_frame(pred.K.numpy(), base.shape)
                     render_result = render_meshes(
                         base, verts, faces, {"focal": focal, "princpt": k},
                         color=None, return_mask=transparent,
