@@ -211,9 +211,9 @@ def _fallback_overlay(image: np.ndarray, pred, show_skeleton: bool, show_id: boo
     ids = track_id.detach().cpu().numpy() if track_id is not None else None
     for i, pts in enumerate(joints):
         color = colors[int(ids[i]) % len(colors)] if ids is not None else colors[i % len(colors)]
-        for x, y in pts:
-            cv2.circle(out, (int(x), int(y)), 3, color, -1, cv2.LINE_AA)
         if show_skeleton:
+            for x, y in pts:
+                cv2.circle(out, (int(x), int(y)), 3, color, -1, cv2.LINE_AA)
             for a, b in zip(range(len(pts) - 1), range(1, len(pts))):
                 cv2.line(out, tuple(pts[a].astype(int)), tuple(pts[b].astype(int)), color, 2, cv2.LINE_AA)
         if show_id:
