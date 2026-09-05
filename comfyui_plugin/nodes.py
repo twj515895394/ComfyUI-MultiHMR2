@@ -24,6 +24,15 @@ _SESSION_CACHE: dict[tuple[str, bool], Any] = {}
 _SEGMENTER_CACHE: Any = None
 
 
+def _use_software_mesh() -> bool:
+    """Use the no-OpenGL renderer for headless ComfyUI runs on Windows."""
+    # WGL needs a desktop/window context.  ComfyUI's worker commonly runs
+    # without one, so probing pyrender for every frame only creates noise and
+    # adds latency.  Allow an explicit opt-in for users with a working WGL
+    # context.
+    return os.name == "nt" and os.environ.get("MULTIHMR2_FORCE_OPENGL") != "1"
+
+
 def _backend():
     """Import the bundled backend lazily so missing optional deps do not block ComfyUI."""
     package_root = str(PLUGIN_ROOT)
@@ -295,7 +304,12 @@ class MultiHMR2VideoRender:
                     base[...] = (0, 255, 0)
             alpha = (high_quality_masks[index] * 255).astype(np.uint8) if high_quality_masks is not None else (np.zeros(base.shape[:2], dtype=np.uint8) if transparent else None)
             try:
-                if show_mesh and len(pred) and hasattr(render_meshes, "__call__"):
+                if show_mesh and len(pred) and _use_software_mesh():
+                    focal, k = _camera_to_frame(pred.K.numpy(), base.shape)
+                    base, software_alpha = _software_mesh_overlay(base, pred, focal, k, mesh_opacity)
+                    if transparent:
+                        alpha = np.maximum(alpha, software_alpha)
+                elif show_mesh and len(pred) and hasattr(render_meshes, "__call__"):
                     body_model = analysis.get("body_model")
                     # The current backend's render helper needs the loaded session body faces.
                     session = _session(False)
@@ -315,7 +329,7 @@ class MultiHMR2VideoRender:
                     else:
                         base = (base * (1.0 - float(mesh_opacity)) + render_result * float(mesh_opacity)).clip(0, 255).astype(np.uint8)
             except Exception as exc:
-                LOGGER.warning("3D mesh rendering unavailable on frame %s; using software mesh fallback: %s", index, exc)
+                LOGGER.warning("Mesh rendering failed on frame %s; using software mesh fallback: %s", index, exc)
                 if show_mesh and len(pred):
                     try:
                         session = _session(False)

@@ -7,6 +7,7 @@ import torch
 from torch import nn
 from ...utils import unpatch
 import math
+from pathlib import Path
 from dataclasses import dataclass
 from enum import Enum
 
@@ -54,7 +55,16 @@ class Encoder(nn.Module):
                 raise NotImplementedError(f"Backbone {config.backbone} not implemented")
 
         self.name = config.backbone.value
-        self.backbone = torch.hub.load(repo, self.name, pretrained=config.pretrained)
+        # Prefer the repository already cached by the ComfyUI plugin.  Loading
+        # it as a local hub source avoids torch.hub re-downloading GitHub's
+        # branch archive on every fresh ComfyUI process.
+        cached_repo = Path(torch.hub.get_dir()) / "facebookresearch_dinov3_main"
+        if (cached_repo / "hubconf.py").is_file():
+            self.backbone = torch.hub.load(
+                str(cached_repo), self.name, source="local", pretrained=config.pretrained
+            )
+        else:
+            self.backbone = torch.hub.load(repo, self.name, pretrained=config.pretrained)
 
         self.patch_size = self.backbone.patch_size
         self.embed_dim = self.backbone.embed_dim
