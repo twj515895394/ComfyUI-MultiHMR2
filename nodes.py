@@ -101,11 +101,14 @@ def _release_memory() -> None:
                 except Exception as exc:
                     LOGGER.debug("Could not move cached model to CPU during cleanup: %s", exc)
     _SESSION_CACHE.clear()
-    if _SEGMENTER_CACHE is not None and hasattr(_SEGMENTER_CACHE, "to"):
-        try:
-            _SEGMENTER_CACHE.to("cpu")
-        except Exception as exc:
-            LOGGER.debug("Could not move cached segmenter to CPU during cleanup: %s", exc)
+    segmenter = _SEGMENTER_CACHE[1] if isinstance(_SEGMENTER_CACHE, tuple) else _SEGMENTER_CACHE
+    segmenter_objects = [segmenter, getattr(segmenter, "model", None)]
+    for obj in segmenter_objects:
+        if obj is not None and hasattr(obj, "to"):
+            try:
+                obj.to("cpu")
+            except Exception as exc:
+                LOGGER.debug("Could not move cached segmenter to CPU during cleanup: %s", exc)
     _SEGMENTER_CACHE = None
     gc.collect()
     if torch.cuda.is_available():
@@ -255,30 +258,82 @@ def _load_or_analyze(images, fps, conf_thresh, dist_thresh_nms, lowres, compile_
     return preds, key
 
 
-def _birefnet_masks(images):
-    """Reuse the installed ComfyUI-RMBG BiRefNet node for high-quality alpha."""
+def _normalise_segmenter_masks(result):
+    """Convert either ComfyUI-RMBG output format to a BxHxW float array."""
+    raw_masks = result[1] if isinstance(result, tuple) and len(result) >= 2 else result
+    if isinstance(raw_masks, torch.Tensor):
+        masks = raw_masks.detach().cpu().float().numpy()
+    elif isinstance(raw_masks, (list, tuple)):
+        converted = []
+        for item in raw_masks:
+            if isinstance(item, torch.Tensor):
+                item = item.detach().cpu().numpy()
+            converted.append(np.asarray(item))
+        masks = np.stack(converted, axis=0)
+    else:
+        masks = np.asarray(raw_masks)
+    if masks.ndim == 4 and masks.shape[1] == 1:
+        masks = masks[:, 0]
+    elif masks.ndim == 4 and masks.shape[-1] == 1:
+        masks = masks[..., 0]
+    elif masks.ndim == 2:
+        masks = masks[None, ...]
+    masks = masks.astype(np.float32, copy=False)
+    if masks.size and float(masks.max()) > 1.5:
+        masks /= 255.0
+    return np.clip(masks, 0.0, 1.0)
+
+
+def _cached_segmenter(mode: str, module_name: str, class_name: str):
     global _SEGMENTER_CACHE
-    try:
-        rmbg_dir = COMFY_ROOT / "custom_nodes" / "ComfyUI-RMBG" / "py"
-        if str(rmbg_dir) not in sys.path:
-            sys.path.insert(0, str(rmbg_dir))
-        if _SEGMENTER_CACHE is None:
-            module = importlib.import_module("AILab_BiRefNet")
-            _SEGMENTER_CACHE = module.BiRefNetRMBG()
-        _, masks, _ = _SEGMENTER_CACHE.process_image(
-            images, model="BiRefNet-portrait", sensitivity=1.0,
-            mask_blur=0, mask_offset=0, invert_output=False,
-            refine_foreground=True, background="Alpha", background_color="#000000",
-        )
-        masks = masks.detach().cpu().float().clamp(0, 1).numpy()
-        return masks[:, 0] if masks.ndim == 4 else masks
-    except Exception as exc:
-        LOGGER.warning(
-            "BiRefNet unavailable; high-quality source-person cleanup is skipped "
-            "(transparent mode falls back to mesh alpha): %s",
-            exc,
-        )
-        return None
+    if not isinstance(_SEGMENTER_CACHE, tuple) or _SEGMENTER_CACHE[0] != mode:
+        module = importlib.import_module(module_name)
+        _SEGMENTER_CACHE = (mode, getattr(module, class_name)())
+    return _SEGMENTER_CACHE[1]
+
+
+def _birefnet_masks(images):
+    """Use the installed ComfyUI-RMBG segmenter without forcing a download."""
+    rmbg_dir = COMFY_ROOT / "custom_nodes" / "ComfyUI-RMBG" / "py"
+    if str(rmbg_dir) not in sys.path:
+        sys.path.insert(0, str(rmbg_dir))
+
+    birefnet_dir = COMFY_ROOT / "models" / "RMBG" / "BiRefNet"
+    birefnet_files = (
+        "birefnet.py", "BiRefNet_config.py", "BiRefNet-portrait.safetensors", "config.json"
+    )
+    if all((birefnet_dir / filename).is_file() for filename in birefnet_files):
+        try:
+            segmenter = _cached_segmenter("birefnet", "AILab_BiRefNet", "BiRefNetRMBG")
+            result = segmenter.process_image(
+                images, model="BiRefNet-portrait", sensitivity=1.0,
+                mask_blur=0, mask_offset=0, invert_output=False,
+                refine_foreground=True, background="Alpha", background_color="#000000",
+            )
+            return _normalise_segmenter_masks(result)
+        except Exception as exc:
+            LOGGER.warning("BiRefNet-portrait failed; trying cached RMBG-2.0: %s", exc)
+
+    rmbg20_dir = COMFY_ROOT / "models" / "RMBG" / "RMBG-2.0"
+    rmbg20_files = ("config.json", "model.safetensors", "birefnet.py", "BiRefNet_config.py")
+    if all((rmbg20_dir / filename).is_file() for filename in rmbg20_files):
+        try:
+            segmenter = _cached_segmenter("rmbg20", "AILab_RMBG", "RMBG")
+            LOGGER.info("Using cached ComfyUI-RMBG model: RMBG-2.0")
+            result = segmenter.process_image(
+                images, model="RMBG-2.0", sensitivity=1.0, process_res=1024,
+                mask_blur=0, mask_offset=0, invert_output=False,
+                refine_foreground=False, background="Alpha", background_color="#000000",
+            )
+            return _normalise_segmenter_masks(result)
+        except Exception as exc:
+            LOGGER.warning("Cached RMBG-2.0 failed: %s", exc)
+
+    LOGGER.warning(
+        "No local ComfyUI-RMBG portrait model is available; source-person cleanup is skipped "
+        "(transparent mode falls back to mesh alpha)"
+    )
+    return None
 
 
 def _remove_source_person(image: np.ndarray, mask: np.ndarray) -> np.ndarray:

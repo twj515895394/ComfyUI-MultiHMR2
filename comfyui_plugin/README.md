@@ -135,7 +135,7 @@ X:\ComfyUI-aki-v2\ComfyUI\temp\multihmr2\
 
 ### 原视频人物轮廓清除
 
-`remove_source_person` 默认为 `true`。当 `background=original` 且当前帧检测到白模时，插件会调用已安装的 ComfyUI-RMBG BiRefNet 人像分割，先移除原视频人物像素并修复背景，再合成 Multi-HMR2 白模，从而避免原人物轮廓残留在白模外。
+`remove_source_person` 默认为 `true`。当 `background=original` 且当前帧检测到白模时，插件会调用已安装的 ComfyUI-RMBG 人像分割，先移除原视频人物像素并修复背景，再合成 Multi-HMR2 白模，从而避免原人物轮廓残留在白模外。插件优先使用 `models\\RMBG\\BiRefNet\\BiRefNet-portrait.safetensors`；如果该模型未缓存，会自动复用已存在的 `models\\RMBG\\RMBG-2.0\\model.safetensors`，不会强制联网下载。
 
 如果没有安装 ComfyUI-RMBG，日志会提示并保留原来的合成行为。若不接受背景修复可能产生的纹理变化，建议使用 `green_screen` 或 `transparent` 背景模式。
 
