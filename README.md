@@ -30,6 +30,27 @@
 
 </p>
 
+## ComfyUI custom node
+
+本仓库同时包含可直接安装到 ComfyUI 的 Multi-HMR2 节点插件。将本仓库直接克隆到 `ComfyUI/custom_nodes/ComfyUI-MultiHMR2` 后，ComfyUI 会从仓库根目录加载 `__init__.py` 和 `nodes.py`。
+
+详细的 ComfyUI 安装、模型下载、节点参数与故障排查说明见：[comfyui_plugin/README.md](comfyui_plugin/README.md)。
+
+### 快速安装（Windows）
+
+```powershell
+cd X:\ComfyUI-aki-v2\ComfyUI\custom_nodes
+git clone git@github.com:twj515895394/ComfyUI-MultiHMR2.git
+```
+
+然后将模型放到：
+
+```text
+X:\ComfyUI-aki-v2\ComfyUI\models\multihmr2\multihmr2.pt
+```
+
+重启 ComfyUI 后，在节点菜单中搜索 `MultiHMR2`。
+
 
 ## Installation
 
