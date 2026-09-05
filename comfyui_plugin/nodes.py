@@ -199,6 +199,38 @@ def _fallback_overlay(image: np.ndarray, pred, show_skeleton: bool, show_id: boo
     return out
 
 
+def _software_mesh_overlay(image: np.ndarray, pred, focal: np.ndarray, princpt: np.ndarray, opacity: float):
+    """Render a stable white 3D silhouette without an OpenGL context.
+
+    ComfyUI often runs headless on Windows, where pyrender cannot create a WGL
+    context.  The projected mesh hull is a useful visual fallback and keeps the
+    node's main output usable instead of dropping all the way to skeleton-only.
+    """
+    import cv2
+
+    overlay = image.copy()
+    alpha_mask = np.zeros(image.shape[:2], dtype=np.uint8)
+    for vertices in pred.persons.v3d.detach().cpu().numpy():
+        verts = vertices.reshape(-1, 3)
+        z = verts[:, 2]
+        valid = np.isfinite(verts).all(axis=1) & (z > 1e-5)
+        if valid.sum() < 3:
+            continue
+        pts = np.empty((valid.sum(), 2), dtype=np.float32)
+        xyz = verts[valid]
+        pts[:, 0] = focal[0] * xyz[:, 0] / xyz[:, 2] + princpt[0]
+        pts[:, 1] = focal[1] * xyz[:, 1] / xyz[:, 2] + princpt[1]
+        pts = np.round(pts).astype(np.int32)
+        pts[:, 0] = np.clip(pts[:, 0], 0, image.shape[1] - 1)
+        pts[:, 1] = np.clip(pts[:, 1], 0, image.shape[0] - 1)
+        hull = cv2.convexHull(pts)
+        cv2.fillConvexPoly(alpha_mask, hull, 255)
+        cv2.fillConvexPoly(overlay, hull, (235, 235, 235), cv2.LINE_AA)
+    amount = float(np.clip(opacity, 0.0, 1.0))
+    blended = (image * (1.0 - amount) + overlay * amount).clip(0, 255).astype(np.uint8)
+    return blended, alpha_mask
+
+
 class MultiHMR2VideoAnalyze:
     @classmethod
     def INPUT_TYPES(cls):
@@ -283,7 +315,16 @@ class MultiHMR2VideoRender:
                     else:
                         base = (base * (1.0 - float(mesh_opacity)) + render_result * float(mesh_opacity)).clip(0, 255).astype(np.uint8)
             except Exception as exc:
-                LOGGER.warning("3D mesh rendering unavailable on frame %s; using 2D fallback: %s", index, exc)
+                LOGGER.warning("3D mesh rendering unavailable on frame %s; using software mesh fallback: %s", index, exc)
+                if show_mesh and len(pred):
+                    try:
+                        session = _session(False)
+                        focal, k = _camera_to_frame(pred.K.numpy(), base.shape)
+                        base, software_alpha = _software_mesh_overlay(base, pred, focal, k, mesh_opacity)
+                        if transparent:
+                            alpha = np.maximum(alpha, software_alpha)
+                    except Exception as fallback_exc:
+                        LOGGER.warning("Software mesh fallback unavailable on frame %s: %s", index, fallback_exc)
             if show_skeleton or show_track_id:
                 base = _fallback_overlay(base, pred, show_skeleton, show_track_id)
             if transparent:
