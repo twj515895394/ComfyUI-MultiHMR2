@@ -30,6 +30,12 @@ def _backend():
     if package_root not in sys.path:
         sys.path.insert(0, package_root)
     try:
+        # ComfyUI video/render plugins may globally force EGL.  The Windows
+        # EGL path on this installation fails with EGL_BAD_PARAMETER; letting
+        # pyrender select native WGL is the reliable offscreen path here.
+        if os.name == "nt" and os.environ.get("PYOPENGL_PLATFORM") in {"egl", "osmesa"}:
+            LOGGER.warning("Ignoring incompatible PYOPENGL_PLATFORM=%s on Windows; using native WGL", os.environ["PYOPENGL_PLATFORM"])
+            os.environ.pop("PYOPENGL_PLATFORM", None)
         from multihmr2 import init_hmr_session, infer_image
         from multihmr2.utils.render import render_meshes
         from multihmr2.tracker import FeatPelvisTracker
