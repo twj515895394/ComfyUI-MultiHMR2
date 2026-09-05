@@ -267,7 +267,9 @@ class MultiHMR2VideoRender:
                     focal, k = _camera_to_frame(pred.K.numpy(), base.shape)
                     render_result = render_meshes(
                         base, verts, faces, {"focal": focal, "princpt": k},
-                        color=None, return_mask=transparent,
+                        # Stable light material makes the reconstructed body
+                        # visibly read as a white model over the source footage.
+                        color=(0.92, 0.92, 0.92), return_mask=transparent,
                     )
                     if transparent:
                         rendered, alpha = render_result
