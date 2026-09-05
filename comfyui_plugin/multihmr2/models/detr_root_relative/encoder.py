@@ -58,10 +58,12 @@ class Encoder(nn.Module):
         # Prefer the repository already cached by the ComfyUI plugin.  Loading
         # it as a local hub source avoids torch.hub re-downloading GitHub's
         # branch archive on every fresh ComfyUI process.
+        bundled_repo = Path(__file__).resolve().parents[3] / "third_party" / "dinov3"
         cached_repo = Path(torch.hub.get_dir()) / "facebookresearch_dinov3_main"
-        if (cached_repo / "hubconf.py").is_file():
+        local_repo = bundled_repo if (bundled_repo / "hubconf.py").is_file() else cached_repo
+        if (local_repo / "hubconf.py").is_file():
             self.backbone = torch.hub.load(
-                str(cached_repo), self.name, source="local", pretrained=config.pretrained
+                str(local_repo), self.name, source="local", pretrained=config.pretrained
             )
         else:
             self.backbone = torch.hub.load(repo, self.name, pretrained=config.pretrained)
