@@ -248,10 +248,9 @@ def _software_mesh_overlay(image: np.ndarray, pred, focal: np.ndarray, princpt: 
             edge2 = verts[tri[2]] - verts[tri[0]]
             normal = np.cross(edge1, edge2)
             light = float(np.clip(abs(normal[1]) / (np.linalg.norm(normal) + 1e-6), 0.0, 1.0))
-            shade = int(210 + 45 * light)
+            shade = int(225 + 30 * light)
             cv2.fillConvexPoly(overlay, polygon, (shade, shade, shade), cv2.LINE_AA)
             cv2.fillConvexPoly(alpha_mask, polygon, 255, cv2.LINE_AA)
-            cv2.polylines(overlay, [polygon], True, (105, 105, 105), 1, cv2.LINE_AA)
     amount = float(np.clip(opacity, 0.0, 1.0))
     blended = (image * (1.0 - amount) + overlay * amount).clip(0, 255).astype(np.uint8)
     return blended, alpha_mask
