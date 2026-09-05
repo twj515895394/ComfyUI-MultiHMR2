@@ -9,6 +9,7 @@ import logging
 import os
 import sys
 import tempfile
+from dataclasses import fields as dataclass_fields
 from pathlib import Path
 from typing import Any
 
@@ -94,11 +95,11 @@ def _as_uint8(frame: torch.Tensor) -> np.ndarray:
     return (array[..., :3] * 255.0 + 0.5).astype(np.uint8)
 
 
-def _cache_key(images: torch.Tensor, fps: float, conf: float, nms: float, lowres: bool, model_size: int) -> str:
+def _cache_key(images: torch.Tensor, fps: float, conf: float, nms: float, lowres: bool, model_size: int, track_hold_frames: int) -> str:
     digest = hashlib.sha256()
     for frame in images:
         digest.update(_as_uint8(frame).tobytes())
-    digest.update(json.dumps([fps, conf, nms, lowres, model_size, "0.1.1"], sort_keys=True).encode())
+    digest.update(json.dumps([fps, conf, nms, lowres, model_size, track_hold_frames, "0.1.2"], sort_keys=True).encode())
     return digest.hexdigest()
 
 
@@ -127,12 +128,78 @@ def _configure_session_input_size(session, model_size: int) -> None:
         session.img_size = model_size
 
 
-def _load_or_analyze(images, fps, conf_thresh, dist_thresh_nms, lowres, compile_model, segment_size, model_size):
+def _append_person(persons, person):
+    data = {}
+    for field in dataclass_fields(type(persons)):
+        value = getattr(persons, field.name)
+        extra = getattr(person, field.name)
+        if isinstance(value, torch.Tensor):
+            if extra.ndim == value.ndim - 1:
+                extra = extra.unsqueeze(0)
+            data[field.name] = torch.cat([value, extra], dim=0)
+        elif field.name == "num_person":
+            data[field.name] = int(value) + 1
+        else:
+            data[field.name] = value
+    return type(persons)(**data)
+
+
+def _interpolate_person(previous, following, ratio: float):
+    data = {}
+    for field in dataclass_fields(type(previous)):
+        name = field.name
+        value = getattr(previous, name)
+        other = getattr(following, name)
+        if name == "num_person":
+            data[name] = 1
+        elif isinstance(value, torch.Tensor) and isinstance(other, torch.Tensor):
+            if value.is_floating_point() and value.shape == other.shape:
+                data[name] = value * (1.0 - ratio) + other * ratio
+            else:
+                data[name] = value
+        else:
+            data[name] = value
+    return type(previous)(**data)
+
+
+def _fill_track_gaps(preds, max_gap: int):
+    """Fill short same-track detection gaps with pose interpolation."""
+    if max_gap <= 0:
+        return preds
+    track_history = {}
+    for frame_index, pred in enumerate(preds):
+        ids = getattr(pred.persons, "track_id", None)
+        if ids is None:
+            continue
+        for person_index, track_id in enumerate(ids.detach().cpu().flatten().tolist()):
+            track_history.setdefault(int(track_id), []).append((frame_index, pred.persons[person_index]))
+
+    filled = list(preds)
+    for entries in track_history.values():
+        for (left_index, left_person), (right_index, right_person) in zip(entries, entries[1:]):
+            gap = right_index - left_index - 1
+            if not 1 <= gap <= max_gap:
+                continue
+            for frame_index in range(left_index + 1, right_index):
+                current = filled[frame_index]
+                current_ids = getattr(current.persons, "track_id", None)
+                if current_ids is not None and int((current_ids == left_person.track_id).sum()) > 0:
+                    continue
+                ratio = (frame_index - left_index) / float(right_index - left_index)
+                person = _interpolate_person(left_person, right_person, ratio)
+                filled[frame_index] = type(current)(K=current.K, persons=_append_person(current.persons, person))
+    return filled
+
+
+def _load_or_analyze(images, fps, conf_thresh, dist_thresh_nms, lowres, compile_model, segment_size, model_size, track_hold_frames):
     CACHE_ROOT.mkdir(parents=True, exist_ok=True)
     model_size = int(model_size)
     if model_size not in (384, 512, 640, 768):
         raise ValueError(f"model_size 必须是 384、512、640 或 768，实际为 {model_size}")
-    key = _cache_key(images, fps, conf_thresh, dist_thresh_nms, lowres, model_size)
+    track_hold_frames = int(track_hold_frames)
+    if track_hold_frames not in (0, 2, 4, 6, 8):
+        raise ValueError(f"track_hold_frames 必须是 0、2、4、6 或 8，实际为 {track_hold_frames}")
+    key = _cache_key(images, fps, conf_thresh, dist_thresh_nms, lowres, model_size, track_hold_frames)
     cache_path = CACHE_ROOT / f"{key}.pt"
     if cache_path.is_file():
         LOGGER.info("Multi-HMR2 cache hit: %s", cache_path)
@@ -156,6 +223,7 @@ def _load_or_analyze(images, fps, conf_thresh, dist_thresh_nms, lowres, compile_
                 lowres=bool(lowres),
             )
             preds.append(_track_frame(tracker, session, frame_pred, time))
+    preds = _fill_track_gaps(preds, track_hold_frames)
     torch.save(preds, cache_path)
     return preds, key
 
@@ -311,6 +379,7 @@ class MultiHMR2VideoAnalyze:
             "video_info": ("VHS_VIDEOINFO", {"tooltip": "VHS 视频元数据，用于读取真实 FPS；建议连接 VHS Load Video 的 video_info。"}),
             "segment_size": ("INT", {"default": 120, "min": 0, "max": 10000, "step": 1, "tooltip": "每段处理的帧数。120 适合长视频；0 表示不主动分段。分段之间仍共享 tracker，Track ID 保持连续。"}),
             "model_size": (["384", "512", "640", "768"], {"default": "768", "tooltip": "模型输入最大边长度（像素）。越大细节和小人物检测越好，但速度和显存开销更高；最大为 768，推荐 768。"}),
+            "track_hold_frames": (["0", "2", "4", "6", "8"], {"default": "4", "tooltip": "短时漏检补帧长度。对同一 Track ID 在短暂漏检期间插值保持人体，减少视频闪烁；0 表示关闭，推荐 4。"}),
         }}
 
     RETURN_TYPES = ("MULTI_HMR2_ANALYSIS", "INT", "AUDIO", "VHS_VIDEOINFO")
@@ -318,11 +387,12 @@ class MultiHMR2VideoAnalyze:
     FUNCTION = "analyze"
     CATEGORY = "MultiHMR2/Video"
 
-    def analyze(self, images, frame_count, conf_thresh, dist_thresh_nms, lowres, compile_model, segment_size=120, model_size="768", audio=None, video_info=None):
+    def analyze(self, images, frame_count, conf_thresh, dist_thresh_nms, lowres, compile_model, segment_size=120, model_size="768", track_hold_frames="4", audio=None, video_info=None):
         fps = float((video_info or {}).get("loaded_fps", 30.0))
         model_size = int(model_size)
-        preds, key = _load_or_analyze(images, fps, conf_thresh, dist_thresh_nms, lowres, compile_model, segment_size, model_size)
-        return ({"preds": preds, "cache_key": key, "fps": fps, "lowres": bool(lowres), "model_size": model_size}, int(frame_count), audio, video_info or {})
+        track_hold_frames = int(track_hold_frames)
+        preds, key = _load_or_analyze(images, fps, conf_thresh, dist_thresh_nms, lowres, compile_model, segment_size, model_size, track_hold_frames)
+        return ({"preds": preds, "cache_key": key, "fps": fps, "lowres": bool(lowres), "model_size": model_size, "track_hold_frames": track_hold_frames}, int(frame_count), audio, video_info or {})
 
 
 class MultiHMR2VideoRender:
