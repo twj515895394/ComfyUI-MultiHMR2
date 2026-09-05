@@ -25,12 +25,8 @@ _SEGMENTER_CACHE: Any = None
 
 
 def _use_software_mesh() -> bool:
-    """Use the no-OpenGL renderer for headless ComfyUI runs on Windows."""
-    # WGL needs a desktop/window context.  ComfyUI's worker commonly runs
-    # without one, so probing pyrender for every frame only creates noise and
-    # adds latency.  Allow an explicit opt-in for users with a working WGL
-    # context.
-    return os.name == "nt" and os.environ.get("MULTIHMR2_FORCE_OPENGL") != "1"
+    """Allow an explicit software-only mode for troubleshooting."""
+    return os.environ.get("MULTIHMR2_FORCE_SOFTWARE") == "1"
 
 
 def _backend():
