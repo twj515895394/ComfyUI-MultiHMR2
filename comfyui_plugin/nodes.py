@@ -451,17 +451,18 @@ class MultiHMR2VideoRender:
                     faces = [body_model.faces.numpy() for _ in verts]
                     colors = mesh_colors
                     focal, k = _camera_to_frame(pred.K.numpy(), base.shape, model_size=model_size)
-                    render_result = render_meshes(
+                    rendered, render_mask = render_meshes(
                         base, verts, faces, {"focal": focal, "princpt": k},
-                        # Stable light material makes the reconstructed body
-                        # visibly read as a white model over the source footage.
-                        color=colors, return_mask=transparent,
+                        color=colors, return_mask=True,
                     )
                     if transparent:
-                        rendered, alpha = render_result
+                        alpha = np.maximum(alpha, render_mask)
                         base = rendered.astype(np.uint8)
                     else:
-                        base = (base * (1.0 - float(mesh_opacity)) + render_result * float(mesh_opacity)).clip(0, 255).astype(np.uint8)
+                        mask = (render_mask > 0)[..., None].astype(np.float32)
+                        amount = float(np.clip(mesh_opacity, 0.0, 1.0))
+                        blended = base * (1.0 - amount) + rendered * amount
+                        base = (base * (1.0 - mask) + blended * mask).clip(0, 255).astype(np.uint8)
             except Exception as exc:
                 LOGGER.warning("Mesh rendering failed on frame %s; using software mesh fallback: %s", index, exc)
                 if show_mesh and len(pred):

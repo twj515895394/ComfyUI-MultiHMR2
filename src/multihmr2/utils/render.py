@@ -167,25 +167,12 @@ def render_meshes(img, l_mesh, l_face, cam_param, color=None):
     renderflags = pyrender.RenderFlags.RGBA
     rgb, depth = renderer.render(scene, flags=renderflags)
 
-    # update ccording to fg
+    # Keep the raw renderer output and the hard depth mask separate.  The
+    # caller may need to replace the source foreground completely; blending
+    # here would leave a halo of the original person around the white mesh.
     rgb = rgb[:, :, :3].astype(np.float32)
-    fg = (depth > 0)[:, :, None].astype(np.float32)
-
-    # Simple smoothing of the mask
-    bg_blending_radius = 1
-    bg_blending_kernel = 2.0 * torch.ones(
-        (1, 1, 2 * bg_blending_radius + 1, 2 * bg_blending_radius + 1)) / (
-                                 2 * bg_blending_radius + 1) ** 2
-    bg_blending_bias = -torch.ones(1)
-    fg = fg.reshape((fg.shape[0], fg.shape[1]))
-    fg = torch.from_numpy(fg).unsqueeze(0)
-    fg = torch.clamp_min(
-        torch.nn.functional.conv2d(fg, weight=bg_blending_kernel, bias=bg_blending_bias,
-                                   padding=bg_blending_radius) * fg, 0.0)
-    fg = fg.permute(1, 2, 0).numpy()
-
-    img = (fg * rgb + (1 - fg) * img).astype(np.uint8)
+    fg = (depth > 0).astype(np.uint8)
 
     renderer.delete()
 
-    return img.astype(np.uint8)
+    return (fg[..., None] * rgb + (1 - fg[..., None]) * img).astype(np.uint8)
